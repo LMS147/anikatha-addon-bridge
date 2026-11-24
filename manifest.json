@@ -1,0 +1,19 @@
+{
+  "id": "org.anikatha.addon-bridge",
+  "version": "1.0.0",
+  "name": "AniKatha Bridge",
+  "description": "Static bridge add-on shared by AniKatha and Stremio. Serves a small movie catalog with meta and stream responses as plain JSON files — no backend, no build step.",
+  "resources": ["catalog", "meta", "stream"],
+  "types": ["movie"],
+  "catalogs": [
+    {
+      "type": "movie",
+      "id": "anikatha-bridge",
+      "name": "AniKatha Bridge"
+    }
+  ],
+  "behaviorHints": {
+    "configurable": false,
+    "configurationRequired": false
+  }
+}

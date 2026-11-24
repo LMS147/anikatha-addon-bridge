@@ -1,0 +1,14 @@
+{
+  "streams": [
+    {
+      "name": "AniKatha Bridge",
+      "title": "Big Buck Bunny (2008) — sample stream",
+      "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+      "availability": 1,
+      "behaviorHints": {
+        "notWebReady": false
+      }
+    }
+  ],
+  "cacheMaxAge": 86400
+}

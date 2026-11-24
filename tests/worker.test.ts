@@ -7,8 +7,13 @@ const manga = "11111111-1111-4111-8111-111111111111";
 const chapter = "22222222-2222-4222-8222-222222222222";
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
 const store = new Map<string, string>();
+const assignments = new Map<string, string>();
 const env = {
   CACHE: { get: vi.fn(async (key: string) => store.has(key) ? JSON.parse(store.get(key)!) : null), put: vi.fn(async (key: string, value: string) => { store.set(key, value); }) },
+  PAGE_STORE: { idFromName: (name: string) => name, get: (name: string) => ({ fetch: async (_url: string, init?: RequestInit) => {
+    if (init?.method === "POST") { assignments.set(name, String(init.body)); return new Response(null, { status: 204 }); }
+    const value = assignments.get(name); return value ? new Response(value, { headers: { "content-type": "application/json" } }) : new Response(null, { status: 404 });
+  } }) },
   RATE_GATE: { idFromName: vi.fn(() => "global"), get: vi.fn(() => ({ fetch: async () => Response.json({ delay: 0 }) })) }
 } as unknown as import("../src/mangadex").Env;
 const context = { waitUntil: (_p: Promise<unknown>) => {} } as ExecutionContext;
@@ -16,7 +21,7 @@ const call = (path: string, method = "GET") => worker.fetch(new Request("https:/
 let calls: string[];
 
 beforeEach(() => {
-  store.clear(); calls = [];
+  store.clear(); assignments.clear(); calls = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     calls.push(url);
     const u = new URL(url);
@@ -72,11 +77,11 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     expect((await call("/anikatha/pages/manga/md%3Ach%3A33333333-3333-4333-8333-333333333333.json")).status).toBe(404);
     expect((await call("/anikatha/manifest.json", "POST")).status).toBe(405);
   });
-  it("fails closed for third-party at-home servers rather than bypass required reporting", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...fixture("at-home"), baseUrl: "https://node.mangadex.network" })));
+  it("fails closed for unknown at-home server hosts", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...fixture("at-home"), baseUrl: "https://untrusted.example.com" })));
     const response = await call(`/anikatha/pages/manga/md%3Ach%3A${chapter}.json`);
     expect(response.status).toBe(503);
-    expect((await response.json()).error).toMatch(/reporting/);
+    expect((await response.json()).error).toMatch(/Unsupported/);
   });
   it("returns retryable failure for upstream errors and malformed data", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("no", { status: 429 })));
@@ -98,4 +103,28 @@ describe("global rate reservations", () => {
     expect((await second.json()).delay).toBeGreaterThan(200);
     expect((await gate.fetch(request(Date.now() + 10))).status).toBe(503);
   });
+});
+
+it("page assignments expire and are removed by the alarm", async () => {
+  const { PageStore } = await import("../src/pages");
+  const storage = new Map<string, unknown>();
+  let alarm = 0;
+  const state = { storage: {
+    put: async (key: string, value: unknown) => { storage.set(key, value); },
+    get: async (key: string) => storage.get(key),
+    setAlarm: async (time: number) => { alarm = time; },
+    deleteAll: async () => { storage.clear(); }
+  } } as unknown as DurableObjectState;
+  const page = new PageStore(state);
+  const expiry = Date.now() + 1000;
+  expect((await page.fetch(new Request("https://pages.internal", { method: "POST", body: JSON.stringify({ expiresAt: expiry, urls: ["https://node.mangadex.network/data/x/a.png"] }) }))).status).toBe(204);
+  expect(alarm).toBe(expiry);
+  expect((await page.fetch(new Request("https://pages.internal"))).status).toBe(200);
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(expiry + 1);
+    expect((await page.fetch(new Request("https://pages.internal"))).status).toBe(404);
+    await page.alarm();
+    expect(storage.size).toBe(0);
+  } finally { vi.useRealTimers(); }
 });

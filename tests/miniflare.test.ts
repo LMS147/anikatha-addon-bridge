@@ -1,4 +1,4 @@
-import { it, expect } from "vitest";
+import { it, expect, vi } from "vitest";
 import { Miniflare } from "miniflare";
 import { readFileSync } from "node:fs";
 
@@ -10,7 +10,7 @@ it("runs Worker + real KV + global Durable Object with upstream fully mocked", a
   const urls: string[] = [];
   const mf = new Miniflare({
     modules: true, scriptPath: ".wrangler/build/index.js", compatibilityDate: "2026-07-30",
-    kvNamespaces: ["CACHE"], durableObjects: { RATE_GATE: { className: "RateGate", useSQLite: true } },
+    kvNamespaces: ["CACHE"], durableObjects: { RATE_GATE: { className: "RateGate", useSQLite: true }, PAGE_STORE: { className: "PageStore", useSQLite: true } },
     outboundService: async (request: Request) => {
       urls.push(request.url);
       const url = new URL(request.url);
@@ -33,5 +33,54 @@ it("runs Worker + real KV + global Durable Object with upstream fully mocked", a
     expect(pages.status).toBe(200);
     expect((await pages.json()).pages).toHaveLength(2);
     expect(urls.every(u => new URL(u).hostname === "api.mangadex.org")).toBe(true);
+  } finally { await mf.dispose(); }
+}, 20_000);
+
+it("proxies an assigned network image and reports both success and failure", async () => {
+  const reports: Array<{ url: string; success: boolean; bytes: number; cached: boolean; duration: number }> = [];
+  let responseStatus = 200;
+  const mf = new Miniflare({
+    modules: true, scriptPath: ".wrangler/build/index.js", compatibilityDate: "2026-07-30",
+    kvNamespaces: ["CACHE"], durableObjects: { RATE_GATE: { className: "RateGate", useSQLite: true }, PAGE_STORE: { className: "PageStore", useSQLite: true } },
+    outboundService: async (request: Request) => {
+      const url = new URL(request.url);
+      if (url.hostname === "api.mangadex.org" && url.pathname === `/at-home/server/${chapter}`) {
+        const data = JSON.parse(sample("at-home"));
+        data.baseUrl = "https://test-node.mangadex.network/abc";
+        return Response.json(data);
+      }
+      if (url.hostname === "test-node.mangadex.network") {
+        return responseStatus === 200
+          ? new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png", "x-cache": "HIT from test" } })
+          : new Response("error", { status: responseStatus });
+      }
+      if (url.hostname === "api.mangadex.network" && url.pathname === "/report" && request.method === "POST") {
+        expect(request.headers.get("content-type")).toBe("application/json");
+        reports.push(await request.json());
+        return new Response(null, { status: 204 });
+      }
+      return new Response(null, { status: 404 });
+    }
+  });
+  try {
+    const request = (path: string) => mf.dispatchFetch("https://bridge.example" + path);
+    const pagesResponse = await request(`/anikatha/pages/manga/md%3Ach%3A${chapter}.json`);
+    expect(pagesResponse.status).toBe(200);
+    const pages = (await pagesResponse.json()).pages as string[];
+    expect(pages[0]).toMatch(new RegExp(`^https://bridge\\.example/anikatha/image/${chapter}/[0-9a-f-]{36}/0\\.jpg$`));
+    const result = await mf.dispatchFetch(pages[0]);
+    expect(result.status).toBe(200);
+    expect(result.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await result.arrayBuffer())).toEqual(new Uint8Array([137, 80, 78, 71]));
+    responseStatus = 502;
+    const failure = await mf.dispatchFetch(pages[1]);
+    expect(failure.status).toBe(503);
+    // waitUntil reports may complete after the image response.
+    await vi.waitFor(() => expect(reports).toHaveLength(2), { timeout: 3000 });
+    expect(reports[0]).toMatchObject({ success: true, bytes: 4, cached: true, url: "https://test-node.mangadex.network/abc/data/abc123/1-a.png" });
+    expect(reports[1]).toMatchObject({ success: false, bytes: 0, cached: false });
+    expect(reports[0].duration).toBeGreaterThanOrEqual(0);
+    expect((await mf.dispatchFetch(pages[0].replace("/0.jpg", "/999.jpg"))).status).toBe(404);
+    expect((await request("/anikatha/image/invalid/invalid/0.jpg")).status).toBe(404);
   } finally { await mf.dispose(); }
 }, 20_000);

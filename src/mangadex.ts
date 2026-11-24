@@ -1,5 +1,6 @@
-import { Failure, MAX_BYTES, officialImageBase, segment } from "./contract";
-export interface Env { CACHE: KVNamespace; RATE_GATE: DurableObjectNamespace; }
+import { Failure, MAX_BYTES, imageBase, segment } from "./contract";
+export interface Env { CACHE: KVNamespace; RATE_GATE: DurableObjectNamespace; PAGE_STORE: DurableObjectNamespace; }
+import { pageStore } from "./pages";
 type Item = { id: string; attributes: Record<string, unknown>; relationships?: Array<{ type?: unknown; attributes?: { fileName?: unknown } }> };
 type Collection = { data: Item[]; total: number };
 const API = "https://api.mangadex.org/";
@@ -91,18 +92,31 @@ export class MangaDex {
     }
     throw new Failure(502, "MangaDex feed exceeds supported pagination");
   }
-  async pages(id: string) {
+  async pages(id: string, origin: string) {
     // No KV caching: assignments are client/location sensitive and expire.
     const data = await this.get<{ baseUrl: unknown; chapter: { hash: unknown; data: unknown[] } }>(`at-home/server/${id}?forcePort443=true`, false, true);
     if (!data) return null;
-    const base = officialImageBase(data.baseUrl);
-    // AniKatha does not report image retrievals. Never return third-party @Home
-    // nodes without compliant per-image reporting; a safe proxy is future work.
-    if (!base) throw new Failure(503, "MangaDex at-home reporting is required for this server; page proxy not configured");
+    const base = imageBase(data.baseUrl);
+    if (!base) throw new Failure(503, "Unsupported MangaDex at-home host");
     guard(data.chapter && segment(data.chapter.hash) && Array.isArray(data.chapter.data));
     const hash = data.chapter.hash;
-    const pages = data.chapter.data.map(filename => { guard(segment(filename)); return `${base}/data/${hash}/${filename}`; });
-    if (!pages.length) return null;
-    return { pages, expiresAt: new Date(Date.now() + 600_000).toISOString() };
+    guard(data.chapter.data.length <= 500);
+    const urls = data.chapter.data.map(filename => { guard(segment(filename)); return `${base.url}/data/${hash}/${filename}`; });
+    if (!urls.length) return null;
+    const expiresAt = Date.now() + 600_000;
+    if (!base.proxy) return { pages: urls, expiresAt: new Date(expiresAt).toISOString() };
+    const publicOrigin = new URL(origin);
+    if (publicOrigin.protocol !== "https:" || publicOrigin.username || publicOrigin.password ||
+        publicOrigin.hostname === "localhost" || publicOrigin.hostname.endsWith(".local") ||
+        publicOrigin.hostname.includes(":") || /^\d+(?:\.\d+){3}$/.test(publicOrigin.hostname))
+      throw new Failure(503, "A public HTTPS Worker origin is required for page proxying");
+    // Assignment IDs distinguish concurrent resolutions; they are public identifiers, not credentials.
+    const assignmentId = crypto.randomUUID();
+    const result = await pageStore(this.env, id, assignmentId).fetch("https://pages.internal/", {
+      method: "POST", body: JSON.stringify({ expiresAt, urls })
+    });
+    if (!result.ok) throw new Failure(503, "Could not store page assignment");
+    const pages = urls.map((_, index) => `${publicOrigin.origin}/anikatha/image/${id}/${assignmentId}/${index}.jpg`);
+    return { pages, expiresAt: new Date(expiresAt).toISOString() };
   }
 }

@@ -1,8 +1,10 @@
 import { Failure, id, json, manifest } from "./contract";
 import { MangaDex, type Env } from "./mangadex";
 export { RateGate } from "./rate";
+export { PageStore } from "./pages";
+import { image } from "./pages";
 
-async function route(request: Request, env: Env): Promise<Response> {
+async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (request.method !== "GET") return json({ error: "GET only" }, 405);
   const u = new URL(request.url);
   const path = u.pathname;
@@ -26,12 +28,14 @@ async function route(request: Request, env: Env): Promise<Response> {
       }
       return json(await md.search(q, skip), 200, true);
     }
+    const imageMatch = path.match(/^\/anikatha\/image\/([0-9a-f-]+)\/([0-9a-f-]+)\/(\d+)\.jpg$/i);
+    if (imageMatch) return await image(env, ctx, imageMatch[1].toLowerCase(), imageMatch[2].toLowerCase(), imageMatch[3]);
     const match = path.match(/^\/anikatha\/(meta|chapters|pages)\/manga\/([^/]+)\.json$/);
     if (match) {
       const [, resource, raw] = match;
       const identifier = id(decodeURIComponent(raw), resource === "pages" ? "md:ch:" : "md:");
       if (!identifier) return json({ error: "Not found" }, 404);
-      const data = resource === "meta" ? await md.meta(identifier) : resource === "chapters" ? await md.chapters(identifier) : await md.pages(identifier);
+      const data = resource === "meta" ? await md.meta(identifier) : resource === "chapters" ? await md.chapters(identifier) : await md.pages(identifier, u.origin);
       return data === null ? json({ error: "Not found" }, 404) : json(data, 200, resource !== "pages");
     }
     return json({ error: "Not found" }, 404); // Includes unconfigured anime endpoints.
@@ -52,7 +56,7 @@ export default {
     if (cache) { try { const hit = await cache.match(request); if (hit) return hit; } catch { /* cache unavailable */ } }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<Response>(resolve => { timer = setTimeout(() => resolve(json({ error: "Request deadline exceeded" }, 503)), 19_000); });
-    const result = await Promise.race([route(request, env), timeout]);
+    const result = await Promise.race([route(request, env, ctx), timeout]);
     if (timer) clearTimeout(timer);
     if (cache && result.ok) ctx.waitUntil(cache.put(request, result.clone()).catch(() => {}));
     return result;

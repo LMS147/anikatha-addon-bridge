@@ -36,11 +36,19 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     const manifest = await r.json();
     expect(manifest.types).toEqual(["anime", "manga"]); expect(manifest.anikathaProtocolVersion).toBe(1);
     r = await call("/anikatha/catalog/manga/mangadex/search=one%26two&skip=20.json");
-    expect(r.status).toBe(200); expect((await r.json()).metas[0].id).toBe(`md:${manga}`);
+    expect(r.status).toBe(200);
+    const item = (await r.json()).metas[0];
+    expect(item.id).toBe(`md:${manga}`);
+    expect(item.poster).toBe(`https://uploads.mangadex.org/covers/${manga}/example-cover.jpg.512.jpg`);
+    expect(new URL(calls[0]).searchParams.get("includes[]")).toBe("cover_art");
     expect(new URL(calls[0]).searchParams.get("title")).toBe("one&two");
     expect(new URL(calls[0]).searchParams.get("offset")).toBe("20");
-    expect((await (await call(`/anikatha/meta/manga/md%3A${manga}.json`)).json()).meta.id).toBe(`md:${manga}`);
-    expect((await (await call(`/anikatha/chapters/manga/md%3A${manga}.json`)).json()).chapters[0].id).toBe(`md:ch:${chapter}`);
+    const meta = (await (await call(`/anikatha/meta/manga/md%3A${manga}.json`)).json()).meta;
+    expect(meta.id).toBe(`md:${manga}`);
+    expect(meta.poster).toBe(item.poster);
+    const details = await (await call(`/anikatha/chapters/manga/md%3A${manga}.json`)).json();
+    expect(details.chapters[0].id).toBe(`md:ch:${chapter}`);
+    expect(details.meta.poster).toBe(item.poster);
     r = await call(`/anikatha/pages/manga/md%3Ach%3A${chapter}.json`);
     expect(r.status).toBe(200); expect(r.headers.get("cache-control")).toBe("no-store");
     const data = await r.json();
@@ -48,6 +56,15 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     expect(Date.parse(data.expiresAt) - Date.now()).toBeGreaterThan(590_000);
     expect(calls.some(u => u.includes("forcePort443=true"))).toBe(true);
     expect(env.CACHE.put).toHaveBeenCalledWith(expect.any(String), expect.any(String), { expirationTtl: 600 });
+  });
+  it("omits missing or unsafe cover filenames", async () => {
+    const source = fixture("search");
+    source.data[0].relationships[0].attributes.fileName = "../../bad.jpg";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(source)));
+    expect((await (await call("/anikatha/catalog/manga/mangadex.json")).json()).metas[0].poster).toBeUndefined();
+    store.clear();
+    delete source.data[0].relationships;
+    expect((await (await call("/anikatha/catalog/manga/mangadex.json")).json()).metas[0].poster).toBeUndefined();
   });
   it("returns 404 for unknown units and unconfigured anime; rejects writes", async () => {
     expect((await call("/anikatha/stream/anime/ep%3Anone.json")).status).toBe(404);

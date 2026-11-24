@@ -1,6 +1,6 @@
 import { Failure, MAX_BYTES, officialImageBase, segment } from "./contract";
 export interface Env { CACHE: KVNamespace; RATE_GATE: DurableObjectNamespace; }
-type Item = { id: string; attributes: Record<string, unknown> };
+type Item = { id: string; attributes: Record<string, unknown>; relationships?: Array<{ type?: unknown; attributes?: { fileName?: unknown } }> };
 type Collection = { data: Item[]; total: number };
 const API = "https://api.mangadex.org/";
 
@@ -11,7 +11,13 @@ function title(item: Item) {
   guard(titles && typeof titles === "object");
   const name = titles.en || Object.values(titles).find(x => typeof x === "string" && x.length);
   guard(typeof name === "string" && name.length > 0);
-  return { id: `md:${item.id.toLowerCase()}`, type: "manga", name };
+  const file = Array.isArray(item.relationships)
+    ? item.relationships.find(relation => relation?.type === "cover_art")?.attributes?.fileName
+    : undefined;
+  // MangaDex's expanded cover relationship supplies a filename, not a URL.
+  // Only accept a single safe segment before constructing the official HTTPS URL.
+  const poster = segment(file) ? `https://uploads.mangadex.org/covers/${item.id.toLowerCase()}/${file}.512.jpg` : undefined;
+  return { id: `md:${item.id.toLowerCase()}`, type: "manga", name, ...(poster ? { poster } : {}) };
 }
 
 export class MangaDex {
@@ -55,17 +61,20 @@ export class MangaDex {
   async search(q: string, skip: number) {
     const params = new URLSearchParams({ limit: "20", offset: String(skip) });
     params.append("contentRating[]", "safe"); params.append("contentRating[]", "suggestive");
+    params.append("includes[]", "cover_art");
     if (q) params.set("title", q);
     const data = await this.get<Collection>(`manga?${params}`, true);
     guard(data && Array.isArray(data.data));
     return { metas: data.data.map(title) };
   }
   async meta(id: string) {
-    const data = await this.get<{ data: Item }>(`manga/${id}`, true);
+    const data = await this.get<{ data: Item }>(`manga/${id}?includes%5B%5D=cover_art`, true);
     return data ? { meta: title(data.data) } : null;
   }
   async chapters(id: string) {
-    if (!await this.get(`manga/${id}`, true)) return null;
+    const manga = await this.get<{ data: Item }>(`manga/${id}?includes%5B%5D=cover_art`, true);
+    if (!manga) return null;
+    const meta = title(manga.data);
     const chapters: { id: string; title: string }[] = [];
     for (let offset = 0; offset < 10_000; offset += 100) {
       const data = await this.get<Collection>(`manga/${id}/feed?limit=100&offset=${offset}&order%5Bchapter%5D=asc`, true);
@@ -76,8 +85,8 @@ export class MangaDex {
         const { chapter, title: name, translatedLanguage } = row.attributes;
         chapters.push({ id: `md:ch:${row.id.toLowerCase()}`, title: `Chapter${typeof chapter === "string" ? " " + chapter : ""}${typeof name === "string" && name ? " — " + name : ""}${typeof translatedLanguage === "string" && translatedLanguage ? " [" + translatedLanguage + "]" : ""}` });
       }
-      if (new TextEncoder().encode(JSON.stringify({ chapters })).length > MAX_BYTES) throw new Failure(502, "Chapter response too large");
-      if (offset + data.data.length >= data.total) return { chapters };
+      if (new TextEncoder().encode(JSON.stringify({ meta, chapters })).length > MAX_BYTES) throw new Failure(502, "Chapter response too large");
+      if (offset + data.data.length >= data.total) return { meta, chapters };
       guard(data.data.length > 0);
     }
     throw new Failure(502, "MangaDex feed exceeds supported pagination");

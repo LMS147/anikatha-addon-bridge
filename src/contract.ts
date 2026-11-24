@@ -1,6 +1,6 @@
 export const MAX_BYTES = 256 * 1024;
 export const manifest = {
-  id: "org.anikatha.addon-bridge.mangadex", version: "3.0.0", anikathaProtocolVersion: 1,
+  id: "org.anikatha.addon-bridge.mangadex", version: "3.0.1", anikathaProtocolVersion: 1,
   name: "AniKatha MangaDex Bridge", description: "MangaDex manga discovery. Anime sources are not yet configured.",
   types: ["anime", "manga"],
   resources: [

@@ -30,8 +30,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
 
+class Server(socketserver.ThreadingTCPServer):
+    # Allow instant restart after a previous run: without SO_REUSEADDR the
+    # port stays unbindable while old connections sit in TIME_WAIT.
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 if __name__ == "__main__":
-    with socketserver.TCPServer(("0.0.0.0", PORT), Handler) as httpd:
+    with Server(("0.0.0.0", PORT), Handler) as httpd:
         print(f"Serving {ROOT} on http://0.0.0.0:{PORT} (CORS on, no-cache on)")
         print(f"Manifest: http://localhost:{PORT}/manifest.json")
         httpd.serve_forever()

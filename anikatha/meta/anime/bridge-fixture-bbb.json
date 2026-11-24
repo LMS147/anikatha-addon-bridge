@@ -1,0 +1,9 @@
+{
+  "meta": {
+    "id": "bridge-fixture-bbb",
+    "type": "anime",
+    "name": "Big Buck Bunny (compatibility fixture)",
+    "description": "Big Buck Bunny is a Blender Foundation short, not an anime series. This is a static routing and playback test.",
+    "videos": [{"id": "bridge-fixture-bbb-clip", "title": "Sample clip"}]
+  }
+}

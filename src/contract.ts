@@ -1,6 +1,6 @@
 export const MAX_BYTES = 256 * 1024;
 export const manifest = {
-  id: "org.anikatha.addon-bridge.mangadex", version: "3.0.1", anikathaProtocolVersion: 1,
+  id: "org.anikatha.addon-bridge.mangadex", version: "3.0.2", anikathaProtocolVersion: 1,
   name: "AniKatha MangaDex Bridge", description: "MangaDex manga discovery. Anime sources are not yet configured.",
   types: ["anime", "manga"],
   resources: [
@@ -25,13 +25,15 @@ export function id(value: string, prefix: string): string | null {
   const raw = value.slice(prefix.length);
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw) ? raw.toLowerCase() : null;
 }
-export function officialImageBase(value: unknown): string | null {
+export function imageBase(value: unknown): { url: string; proxy: boolean } | null {
   if (typeof value !== "string") return null;
   try {
     const u = new URL(value);
-    if (u.protocol !== "https:" || u.username || u.password || u.hash || u.search ||
-        !(u.hostname === "mangadex.org" || u.hostname.endsWith(".mangadex.org"))) return null;
-    return u.toString().replace(/\/$/, "");
+    if (u.protocol !== "https:" || u.username || u.password || u.hash || u.search || u.port) return null;
+    const official = u.hostname === "mangadex.org" || u.hostname.endsWith(".mangadex.org");
+    const network = u.hostname.endsWith(".mangadex.network");
+    if (!official && !network) return null;
+    return { url: u.toString().replace(/\/$/, ""), proxy: network };
   } catch { return null; }
 }
 export function segment(value: unknown): value is string {

@@ -5,6 +5,7 @@ using AniKathaAddonBridge;
 using AniKathaAddonBridge.Upstream;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -61,7 +62,10 @@ public class BridgeTests : IClassFixture<BridgeTests.Factory>
         var manifest = await Json(await client.GetAsync("/anikatha/manifest.json"));
         Assert.Equal(1, manifest.GetProperty("anikathaProtocolVersion").GetInt32());
         Assert.Equal(new[] { "anime", "manga" }, manifest.GetProperty("types").EnumerateArray().Select(e => e.GetString()).ToArray());
-        var catalog = await Json(await client.GetAsync("/anikatha/catalog/manga/mangadex/search=one%26two&skip=20.json"));
+        const string searchPath = "/anikatha/catalog/manga/mangadex/search=one%26two&skip=20.json";
+        // TestServer does not populate RawTarget; Kestrel does. Set the wire value explicitly.
+        var response = await factory.Server.CreateRequest(searchPath).And(ctx => ctx.Features.Get<IHttpRequestFeature>()!.RawTarget = searchPath).GetAsync();
+        var catalog = await Json(response);
         Assert.Contains("title=one%26two", factory.Handler.LastQuery, StringComparison.OrdinalIgnoreCase);
         var id = catalog.GetProperty("metas")[0].GetProperty("id").GetString();
         Assert.Equal("md:" + Manga, id);

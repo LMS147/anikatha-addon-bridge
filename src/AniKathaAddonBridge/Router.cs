@@ -13,9 +13,9 @@ public static class Router
         // Parse the raw segment so an escaped ampersand in a search term is not treated as a separator.
         app.MapGet("/anikatha/catalog/manga/mangadex/{**extra}", async (HttpContext context, MangaDexClient client, CancellationToken ct) =>
         {
-            var rawPath = (context.Features.Get<IHttpRequestFeature>()?.RawTarget ?? "").Split('?', 2)[0];
+            var rawPath = (context.Features.Get<IHttpRequestFeature>()?.RawTarget is { Length: > 0 } target ? target : context.Request.Path.ToUriComponent()).Split('?', 2)[0];
             const string prefix = "/anikatha/catalog/manga/mangadex/";
-            if (!rawPath.StartsWith(prefix, StringComparison.Ordinal) || !rawPath.EndsWith(".json", StringComparison.Ordinal)) return Results.Json(new { rawPath }, statusCode: 404);
+            if (!rawPath.StartsWith(prefix, StringComparison.Ordinal) || !rawPath.EndsWith(".json", StringComparison.Ordinal)) return Results.NotFound();
             var segment = rawPath[prefix.Length..^5];
             string? search = null;
             var skip = 0;

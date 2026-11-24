@@ -2,7 +2,7 @@ using AniKathaAddonBridge;
 using AniKathaAddonBridge.Upstream;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddMemoryCache();
+builder.Services.AddMemoryCache(options => options.SizeLimit = 1024);
 builder.Services.AddSingleton<UpstreamGate>();
 builder.Services.AddHttpClient<MangaDexClient>(client =>
 {

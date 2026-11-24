@@ -30,7 +30,7 @@ public sealed class MangaDexClient(HttpClient http, IMemoryCache cache, Upstream
             }
             using var doc = JsonDocument.Parse(memory.ToArray());
             var result = doc.RootElement.Clone();
-            if (cacheable) cache.Set(path, result, TimeSpan.FromMinutes(5));
+            if (cacheable) cache.Set(path, result, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5), Size = 1 });
             return result;
         }
         catch (OperationCanceledException ex) when (!token.IsCancellationRequested) { throw new UpstreamException(504, ex); }
@@ -91,6 +91,7 @@ public sealed class MangaDexClient(HttpClient http, IMemoryCache cache, Upstream
                     var lang = attrs.TryGetProperty("translatedLanguage", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
                     chapters.Add(new { id = "md:ch:" + chapterId, title = (number is null ? "Chapter" : "Chapter " + number) + (string.IsNullOrWhiteSpace(title) ? "" : " — " + title) + (string.IsNullOrWhiteSpace(lang) ? "" : " [" + lang + "]") });
                 }
+                if (JsonSerializer.SerializeToUtf8Bytes(new { chapters }).Length > Contract.MaxBytes) throw new UpstreamException(502);
                 var total = root.GetProperty("total").GetInt32();
                 if (offset + data.Length >= total) return new { chapters };
                 if (data.Length == 0) throw new UpstreamException(502);

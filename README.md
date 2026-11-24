@@ -19,7 +19,7 @@ curl -i http://localhost:8080/anikatha/manifest.json
 curl -i http://localhost:8080/anikatha/catalog/manga/mangadex.json
 ```
 
-The tests run against an in-process HTTP server with a mocked upstream. The checked-in test responses are **synthetic schema examples**, not recorded live responses; they never enter production. No tests call MangaDex. Local HTTP is for testing only; AniKatha requires public HTTPS. Actual search, reading, resume, downloads and upstream availability need separate validation against the deployed service. The external API's terms and rate limits must be observed.
+The tests run against an in-process HTTP server with a mocked upstream; CI also curls a real local Kestrel process without upstream calls. The checked-in test responses are **synthetic schema examples**, not recorded live responses; they never enter production. No tests call MangaDex. Local HTTP is for testing only; AniKatha requires public HTTPS. Actual search, reading, resume, downloads and upstream availability need separate validation against the deployed service. The external API's terms and rate limits must be observed.
 
 ## Deployment and install
 

@@ -6,6 +6,8 @@ using AniKathaAddonBridge.Upstream;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -23,8 +25,25 @@ public class BridgeTests : IClassFixture<BridgeTests.Factory>
         protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
         {
             builder.ConfigureTestServices(services =>
-                services.AddHttpClient<MangaDexClient>().ConfigurePrimaryHttpMessageHandler(() => Handler));
+                {
+                services.AddHttpClient<MangaDexClient>().ConfigurePrimaryHttpMessageHandler(() => Handler);
+                services.AddTransient<IStartupFilter, RawTargetFilter>();
+            });
         }
+    }
+
+    public sealed class RawTargetFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (ctx, following) =>
+            {
+                if (ctx.Request.Headers.TryGetValue("X-Test-Raw-Target", out var value))
+                    ctx.Features.Get<IHttpRequestFeature>()!.RawTarget = value.ToString();
+                await following();
+            });
+            next(app);
+        };
     }
 
     public sealed class FakeHandler : HttpMessageHandler
@@ -64,7 +83,9 @@ public class BridgeTests : IClassFixture<BridgeTests.Factory>
         Assert.Equal(new[] { "anime", "manga" }, manifest.GetProperty("types").EnumerateArray().Select(e => e.GetString()).ToArray());
         const string searchPath = "/anikatha/catalog/manga/mangadex/search=one%26two&skip=20.json";
         // TestServer does not populate RawTarget; Kestrel does. Set the wire value explicitly.
-        var response = await factory.Server.CreateRequest(searchPath).And(ctx => ctx.Features.Get<IHttpRequestFeature>()!.RawTarget = searchPath).GetAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Get, searchPath);
+        request.Headers.Add("X-Test-Raw-Target", searchPath);
+        var response = await client.SendAsync(request);
         var catalog = await Json(response);
         Assert.Contains("title=one%26two", factory.Handler.LastQuery, StringComparison.OrdinalIgnoreCase);
         var id = catalog.GetProperty("metas")[0].GetProperty("id").GetString();

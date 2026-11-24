@@ -26,6 +26,12 @@ it("runs Worker + real KV + global Durable Object with upstream fully mocked", a
     expect(catalog.status, await catalog.clone().text() + JSON.stringify(urls)).toBe(200);
     expect((await catalog.json()).metas[0].id).toBe(`md:${title}`);
     expect(new URL(urls[0]).searchParams.get("title")).toBe("one&two");
+    const manhwa = await fetch("/anikatha/catalog/manga/manhwa/search=story&skip=20.json");
+    expect(manhwa.status).toBe(200);
+    const manhwaRequest = new URL(urls[1]);
+    expect(manhwaRequest.searchParams.getAll("originalLanguage[]")).toEqual(["ko"]);
+    expect(manhwaRequest.searchParams.get("title")).toBe("story");
+    expect(manhwaRequest.searchParams.get("offset")).toBe("20");
     const chapters = await fetch(`/anikatha/chapters/manga/md%3A${title}.json`);
     expect(chapters.status).toBe(200);
     expect((await chapters.json()).chapters[0].id).toBe(`md:ch:${chapter}`);

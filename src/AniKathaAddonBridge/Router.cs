@@ -15,7 +15,7 @@ public static class Router
         {
             var rawPath = (context.Features.Get<IHttpRequestFeature>()?.RawTarget ?? "").Split('?', 2)[0];
             const string prefix = "/anikatha/catalog/manga/mangadex/";
-            if (!rawPath.StartsWith(prefix, StringComparison.Ordinal) || !rawPath.EndsWith(".json", StringComparison.Ordinal)) return Results.NotFound();
+            if (!rawPath.StartsWith(prefix, StringComparison.Ordinal) || !rawPath.EndsWith(".json", StringComparison.Ordinal)) return Results.Json(new { rawPath }, statusCode: 404);
             var segment = rawPath[prefix.Length..^5];
             string? search = null;
             var skip = 0;

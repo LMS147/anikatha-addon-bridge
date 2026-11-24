@@ -48,7 +48,7 @@ public class BridgeTests : IClassFixture<BridgeTests.Factory>
 
     static async Task<JsonElement> Json(HttpResponseMessage response)
     {
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, $"{response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
         var bytes = await response.Content.ReadAsByteArrayAsync();
         Assert.True(bytes.Length <= Contract.MaxBytes);
         using var doc = JsonDocument.Parse(bytes);

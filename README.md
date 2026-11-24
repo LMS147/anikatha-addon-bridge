@@ -1,52 +1,34 @@
-# AniKatha Bridge: static compatibility fixtures
+# AniKatha Add-on Bridge
 
-**Phase 1 is static-only. Providers: `none / static-local-fixture`.** No live provider APIs, scraping, plugins or server runtime are integrated. This repository hosts separate JSON fixtures for AniKatha and Stremio, without dependencies or a build step. It is not a real anime catalogue.
+An ASP.NET Core `net10.0` HTTP add-on for MangaDex manga discovery and reading. The old static GitHub Pages prototype is archived in `legacy/static-bridge/`; GitHub Pages cannot run this API and is **not** its deployment. The API does not serve that directory or any test fixtures.
 
-## AniKatha fixture
+## Current functionality and limits
 
-Install the **public HTTPS** manifest (after deployment):
+The MangaDex v5 upstream supports a manga catalog with search/skip, manga details, chapter feeds, and ordered at-home pages. The manifest advertises anime and manga per the target contract, but **no anime source or verified mapping is configured**: anime meta and stream endpoints return 404. There is no dummy content in the production API. AniList/Jikan/SIMKL ID mapping and AniSkip are not implemented; no title or progress mapping is inferred from names or positions. AniKatha already provides AniList, Jikan, and its YouTube episode adapter. YouTube watch URLs are not generic MP4 streams.
 
-`https://lms147.github.io/anikatha-addon-bridge/anikatha/manifest.json`
+Chapter feeds include all returned languages and scanlation variants; the title labels include language, and chapter IDs are stable MangaDex chapter IDs. The HTTP contract has no chapter pagination; a large response over 256 KiB returns 502 rather than silently truncating it. The upstream feed is paged until complete, subject to MangaDex's offset limit. MangaDex at-home page URLs come from each upstream response, with a conservative two-minute `expiresAt`; clients should resolve them again when expired. Metadata/search/feed responses are cached for five minutes. The process-wide upstream gate schedules at most four requests per second; **run only one replica** unless a shared, distributed rate limiter is added. 404 indicates an unknown resource; upstream failures are 502 and upstream timeouts 504 so clients can retry.
 
-The original root `/manifest.json` remains the Stremio `movie` fixture; AniKatha does **not** route its movie resources. The separate AniKatha manifest declares `anime` and `catalog`, `meta`, `stream`, matching [AniKatha's HTTP contract](https://github.com/LMS147/AniKatha/blob/c00cc8e56a266644d0eb31f4eba8f63c0367fac6/docs/HTTP-ADDONS.md). Paths relative to the AniKatha manifest directory are:
+## Run and test
 
-- `catalog/anime/static-fixture.json` → title `bridge-fixture-bbb`
-- `meta/anime/bridge-fixture-bbb.json` → episode `bridge-fixture-bbb-clip`
-- `stream/anime/bridge-fixture-bbb-clip.json` → direct HTTPS MP4
-
-Big Buck Bunny is a Blender Foundation short, **not anime**. We classify this one fixture as `anime` only to exercise AniKatha's routing. The Google Cloud Storage MP4 and existing TMDB image URLs are static media hosts, not API integrations. No AniList mapping is asserted. The root movie fixture's IMDb ID is only an identifier.
-
-### Install and read test
-
-1. After deploying, check that the manifest and three paths above return HTTP 200 JSON over HTTPS without redirects. Unknown units should return 404.
-2. AniKatha → **Profile → Content & discovery → Manage add-ons** → add the AniKatha URL above.
-3. Browse its **Static compatibility fixture** catalogue, open Big Buck Bunny, select **Sample clip**, and try playback (and optionally download). Confirm the source persists after reopening the app.
-4. If something fails, record the AniKatha version, endpoint and error. Local tests check the HTTP shapes, not the actual Android installation, media availability or playback.
-
-Manifest and resource responses must stay under 256 KiB. Use public HTTPS URLs without redirects, credentials, fragments, private IPs or `.local` hosts. Downloadable streams require a stable ID and direct HTTPS MP4; subtitles must be HTTPS VTT/SRT. Future expiring stream/page URLs must declare `expiresAt`. Static file hosting returns 404 for missing resources.
-
-## Local verification
-
-Python 3 only:
+Requires the .NET 10 SDK (tests restore NuGet test packages). No Node/npm:
 
 ```sh
-python3 scripts/validate.py
-python3 -m unittest discover -s tests -v
-python3 scripts/serve.py 8080
+dotnet test tests/AniKathaAddonBridge.Tests/AniKathaAddonBridge.Tests.csproj
+dotnet run --project src/AniKathaAddonBridge --urls http://0.0.0.0:8080
+curl -i http://localhost:8080/anikatha/manifest.json
+curl -i http://localhost:8080/anikatha/catalog/manga/mangadex.json
 ```
 
-The tests start a temporary local server and check the manifest → catalog → meta → episode stream chain, JSON size and missing-resource 404s. Local HTTP is for automated checks only; AniKatha requires public HTTPS. The development server adds CORS and no-store headers.
+The tests run against an in-process HTTP server with a mocked upstream. The checked-in test responses are **synthetic schema examples**, not recorded live responses; they never enter production. No tests call MangaDex. Local HTTP is for testing only; AniKatha requires public HTTPS. Actual search, reading, resume, downloads and upstream availability need separate validation against the deployed service. The external API's terms and rate limits must be observed.
 
-## Deployment
+## Deployment and install
 
-Merge the working branch into `main`, then under **Settings → Pages** select **GitHub Actions**. `.github/workflows/pages.yml` validates both fixtures, uploads the repository, and deploys in a separate job. Only `main` may deploy to the protected `github-pages` environment. The duplicate `static.yml` is removed by this change. Check the Actions run and then the URLs; the test branch cannot demonstrate production deployment under that protection rule.
+Provide a public .NET 10-capable HTTPS host with a stable hostname and TLS termination. Configure its proxy to forward requests to the application on its configured `ASPNETCORE_URLS`/port; do not redirect the add-on endpoints. This repo does not provision a host or deploy automatically. Do not put credentials in manifests, URLs, or source control. Install `https://<your-host>/anikatha/manifest.json` in AniKatha → **Profile → Content & discovery → Manage add-ons**. Verify GET JSON without redirects, response size ≤256 KiB, and then test search → chapters → pages → resume → download on an actual device. Anime playback cannot pass until a verified mapping and licensed source (or AniKatha's existing YouTube adapter) are supplied. Optional live MangaDex checks must be explicitly authorized and rate-limited.
 
-The root `https://lms147.github.io/anikatha-addon-bridge/manifest.json` remains the Stremio fixture. Use its landing page install link or paste that URL in Stremio; it is not the AniKatha install URL. The landing page lists both.
+## Security and operations
 
-## Later phases (not implemented)
-
-Only **after the static AniKatha install/read test passes**, the first planned new upstream is MangaDex API v5 chapter feeds and at-home page URLs, using `expiresAt` for short-lived URLs. Phase 2 is planned as C# / ASP.NET Core Minimal API, not Node. AniList and Jikan are already built into AniKatha and may be considered only for verified cross-service mappings; SIMKL mapping and AniSkip enrichment are later considerations. YouTube episodes are also already built in. This bridge does not re-expose these built-ins or use EverythingMoe (a directory), Comix, KotoPlay, torrents, XDCC, DDL or scraper sites. No secrets belong in manifests, install URLs, or checked-in environment files.
+The API does not redirect resource requests or follow upstream redirects. It returns absolute HTTPS page URLs after rejecting credentials, fragments, IP literals and `.local`/localhost hosts; it validates path segments and does not make server-side requests to the page hosts. Deploy behind a reverse proxy that enforces HTTPS, restricts direct access to internal HTTP, has request limits/timeouts, and prevents untrusted forwarded headers. The `User-Agent` identifies this bridge. For a production deployment, monitor upstream 429/5xx and ensure the upstream global rate policy is shared across every deployment. A hostname resolving to a private address is not checked by this application; clients and deployment infrastructure must apply their own DNS/network protections.
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE).
+GPL-3.0; see [LICENSE](LICENSE).

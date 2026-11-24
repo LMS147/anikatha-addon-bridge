@@ -1,0 +1,36 @@
+name: .NET CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Run offline tests
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet test tests/AniKathaAddonBridge.Tests/AniKathaAddonBridge.Tests.csproj --configuration Release 2>&1 | tee /tmp/dotnet-test.log || {
+            details=$(tail -50 /tmp/dotnet-test.log)
+            details=${details//%/%25}
+            details=${details//$'\n'/%0A}
+            details=${details//$'\r'/%0D}
+            echo "::error::$details"
+            exit 1
+          }
+      - name: Smoke test local HTTP server (no upstream calls)
+        shell: bash
+        run: |
+          dotnet run --no-build --configuration Release --project src/AniKathaAddonBridge --urls http://127.0.0.1:18080 > /tmp/bridge-server.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:18080/anikatha/manifest.json -o /tmp/manifest.json
+          python3 -c 'import json; p=json.load(open("/tmp/manifest.json")); assert p["types"] == ["anime", "manga"] and p["anikathaProtocolVersion"] == 1'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/anikatha/stream/anime/ep%3Aunknown.json)" = 404

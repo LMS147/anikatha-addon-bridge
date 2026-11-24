@@ -2,7 +2,7 @@ name = "anikatha-addon-bridge"
 main = "src/index.ts"
 compatibility_date = "2026-07-30"
 
-# Create a KV namespace and replace the ID before deploying.
+# KV cache for the deployed Cloudflare account.
 [[kv_namespaces]]
 binding = "CACHE"
 id = "52b7b9b0ca8e42f1828449770977f215"
@@ -15,6 +15,10 @@ class_name = "RateGate"
 name = "PAGE_STORE"
 class_name = "PageStore"
 
+[[durable_objects.bindings]]
+name = "REPORT_QUEUE"
+class_name = "ReportQueue"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RateGate"]
@@ -22,3 +26,7 @@ new_sqlite_classes = ["RateGate"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["PageStore"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["ReportQueue"]

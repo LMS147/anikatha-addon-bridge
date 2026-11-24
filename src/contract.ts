@@ -1,13 +1,11 @@
 export const MAX_BYTES = 256 * 1024;
 export const manifest = {
-  id: "org.anikatha.addon-bridge.mangadex", version: "3.1.0", anikathaProtocolVersion: 1,
-  name: "AniKatha MangaDex Bridge", description: "MangaDex manga discovery. Anime sources are not yet configured.",
-  types: ["anime", "manga"],
+  id: "org.anikatha.addon-bridge.mangadex", version: "3.2.0", anikathaProtocolVersion: 1,
+  name: "AniKatha MangaDex Bridge", description: "MangaDex manga and manhwa discovery and reading.",
+  types: ["manga"],
   resources: [
     { name: "catalog", types: ["manga"] },
     { name: "meta", types: ["manga"], idPrefixes: ["md:"] },
-    { name: "meta", types: ["anime"], idPrefixes: ["anilist:"] },
-    { name: "stream", types: ["anime"], idPrefixes: ["ep:"] },
     { name: "chapters", types: ["manga"], idPrefixes: ["md:"] },
     { name: "pages", types: ["manga"], idPrefixes: ["md:ch:"] }
   ],

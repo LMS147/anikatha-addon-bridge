@@ -39,26 +39,20 @@ function allowedUpstream(value: string): boolean {
   try {
     const u = new URL(value);
     return u.protocol === "https:" && !u.username && !u.password && !u.hash && !u.search && !u.port &&
-      u.hostname.endsWith(".mangadex.network");
+      (u.hostname === "mangadex.org" || u.hostname.endsWith(".mangadex.org") || u.hostname.endsWith(".mangadex.network"));
   } catch { return false; }
 }
 
-async function report(url: string, success: boolean, bytes: number, duration: number, cached: boolean): Promise<void> {
-  // The image response must not wait on reporting, but transient report failures
-  // get one retry while waitUntil keeps the Worker alive.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const result = await fetch("https://api.mangadex.network/report", {
-        method: "POST", redirect: "manual", signal: AbortSignal.timeout(5000),
-        headers: { "content-type": "application/json", "user-agent": "AniKathaAddonBridge/3.0 (+https://github.com/LMS147/anikatha-addon-bridge)" },
-        body: JSON.stringify({ url, success, bytes, duration, cached })
-      });
-      if (result.ok) return;
-      if (result.status >= 400 && result.status < 500 && result.status !== 429) break;
-    } catch { /* Retry transient network errors once. */ }
-    if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 250));
-  }
-  console.error("MangaDex image report failed");
+// Mirrors AniKatha's image signature detection; actual offline downloads also
+// validate the full file/container, which cannot be proven from a prefix alone.
+export function imageSignature(bytes: Uint8Array, type: string): boolean {
+  const ascii = (start: number, end: number) => String.fromCharCode(...bytes.slice(start, end));
+  if (type === "image/png") return bytes.length >= 8 && [137,80,78,71,13,10,26,10].every((x, i) => bytes[i] === x);
+  if (type === "image/jpeg") return bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+  if (type === "image/gif") return ["GIF87a", "GIF89a"].includes(ascii(0, 6));
+  if (type === "image/webp") return bytes.length >= 12 && ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP";
+  if (type === "image/avif") return bytes.length >= 12 && ascii(4, 8) === "ftyp" && ["avif", "avis"].includes(ascii(8, 12));
+  return false;
 }
 
 export async function image(env: Env, ctx: ExecutionContext, chapter: string, assignmentId: string, index: string): Promise<Response> {
@@ -67,35 +61,71 @@ export async function image(env: Env, ctx: ExecutionContext, chapter: string, as
   if (!stored.ok) return json({ error: "Page assignment expired; refresh sources" }, 404);
   const assignment = await stored.json<Assignment>();
   const url = assignment.urls[Number(index)];
-  // Only URLs obtained from MangaDex and saved server-side can be fetched.
   if (!url || !allowedUpstream(url)) return json({ error: "Not found" }, 404);
+  if (!env.REPORT_QUEUE) return json({ error: "Image reporting unavailable" }, 503);
+  const queue = env.REPORT_QUEUE.get(env.REPORT_QUEUE.idFromName("global"));
+  // Reserve before retrieving any image, so a full/unavailable queue fails closed.
+  const reserved = await queue.fetch("https://reports.internal/reserve", { method: "POST", body: JSON.stringify({ url }) });
+  if (!reserved.ok) return json({ error: "Image reporting queue unavailable" }, 503);
+  const ticket = await reserved.json<{ id: string }>();
   const started = Date.now();
-  let success = false, bytes = 0, cached = false;
+  let bytes = 0, cached = false, finished = false;
+  let complete!: () => void;
+  const completion = new Promise<void>(resolve => { complete = resolve; });
+  ctx.waitUntil(completion);
+  const finish = async (success: boolean) => {
+    if (finished) return;
+    finished = true;
+    try {
+      const result = await queue.fetch("https://reports.internal/complete", { method: "POST", body: JSON.stringify({ id: ticket.id, success, cached, bytes, duration: Date.now() - started }) });
+      if (!result.ok) console.error("Failed to complete queued image report");
+    } catch { console.error("Failed to complete queued image report"); }
+    finally { complete(); }
+  };
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
-    const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(15_000), headers: { "user-agent": "AniKathaAddonBridge/3.0 (+https://github.com/LMS147/anikatha-addon-bridge)" } });
+    const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(15_000), headers: { "user-agent": "AniKathaAddonBridge/3.2 (+https://github.com/LMS147/anikatha-addon-bridge)" } });
     cached = (response.headers.get("x-cache") ?? "").toUpperCase().startsWith("HIT");
     const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
     if (!response.ok || !IMAGE_TYPES.has(contentType) || Number(response.headers.get("content-length") || 0) > IMAGE_LIMIT || !response.body)
       throw new Error("Invalid upstream image");
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    try {
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        bytes += chunk.value.byteLength;
-        if (bytes > IMAGE_LIMIT) { await reader.cancel(); throw new Error("Image exceeds limit"); }
-        chunks.push(chunk.value);
-      }
-    } finally { reader.releaseLock(); }
-    const data = new Uint8Array(bytes);
+    reader = response.body.getReader();
+    const first: Uint8Array[] = [];
+    let headerSize = 0;
+    while (headerSize < 12) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > IMAGE_LIMIT) throw new Error("Image exceeds limit");
+      headerSize += chunk.value.length;
+      first.push(chunk.value);
+    }
+    const header = new Uint8Array(Math.min(headerSize, 12));
     let offset = 0;
-    for (const chunk of chunks) { data.set(chunk, offset); offset += chunk.length; }
-    success = true;
-    return new Response(data, { headers: { "content-type": contentType, "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+    for (const chunk of first) {
+      const part = chunk.subarray(0, Math.max(0, 12 - offset));
+      header.set(part, offset); offset += part.length;
+      if (offset === 12) break;
+    }
+    if (!imageSignature(header, contentType)) throw new Error("Unsupported image signature");
+    const source = reader;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { for (const chunk of first) controller.enqueue(chunk); },
+      async pull(controller) {
+        try {
+          const next = await source.read();
+          if (next.done) { controller.close(); source.releaseLock(); await finish(true); return; }
+          bytes += next.value.byteLength;
+          if (bytes > IMAGE_LIMIT) { await source.cancel(); throw new Error("Image exceeds limit"); }
+          controller.enqueue(next.value);
+        } catch (error) { controller.error(error); try { source.releaseLock(); } catch {} await finish(false); }
+      },
+      async cancel() { try { await source.cancel(); source.releaseLock(); } finally { await finish(false); } }
+    });
+    return new Response(body, { headers: { "content-type": contentType, "cache-control": "no-store", "x-content-type-options": "nosniff" } });
   } catch {
+    if (reader) { try { await reader.cancel(); reader.releaseLock(); } catch {} }
+    await finish(false);
     return json({ error: "Image source unavailable; refresh sources" }, 503);
-  } finally {
-    ctx.waitUntil(report(url, success, bytes, Date.now() - started, cached));
   }
 }

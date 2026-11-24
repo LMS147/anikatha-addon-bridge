@@ -1,5 +1,5 @@
 import { Failure, MAX_BYTES, imageBase, segment } from "./contract";
-export interface Env { CACHE: KVNamespace; RATE_GATE: DurableObjectNamespace; PAGE_STORE: DurableObjectNamespace; }
+export interface Env { CACHE: KVNamespace; RATE_GATE: DurableObjectNamespace; PAGE_STORE: DurableObjectNamespace; REPORT_QUEUE: DurableObjectNamespace; }
 import { pageStore } from "./pages";
 type Item = { id: string; attributes: Record<string, unknown>; relationships?: Array<{ type?: unknown; attributes?: { fileName?: unknown } }> };
 type Collection = { data: Item[]; total: number };
@@ -105,7 +105,6 @@ export class MangaDex {
     const urls = data.chapter.data.map(filename => { guard(segment(filename)); return `${base.url}/data/${hash}/${filename}`; });
     if (!urls.length) return null;
     const expiresAt = Date.now() + 600_000;
-    if (!base.proxy) return { pages: urls, expiresAt: new Date(expiresAt).toISOString() };
     const publicOrigin = new URL(origin);
     if (publicOrigin.protocol !== "https:" || publicOrigin.username || publicOrigin.password ||
         publicOrigin.hostname === "localhost" || publicOrigin.hostname.endsWith(".local") ||
@@ -117,7 +116,7 @@ export class MangaDex {
       method: "POST", body: JSON.stringify({ expiresAt, urls })
     });
     if (!result.ok) throw new Failure(503, "Could not store page assignment");
-    const pages = urls.map((_, index) => `${publicOrigin.origin}/anikatha/image/${id}/${assignmentId}/${index}.jpg`);
+    const pages = urls.map((_, index) => `${publicOrigin.origin}/anikatha/media/manga/${id}/${index}?assignment=${assignmentId}`);
     return { pages, expiresAt: new Date(expiresAt).toISOString() };
   }
 }

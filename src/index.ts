@@ -2,6 +2,7 @@ import { Failure, id, json, manifest } from "./contract";
 import { MangaDex, type Env } from "./mangadex";
 export { RateGate } from "./rate";
 export { PageStore } from "./pages";
+export { ReportQueue } from "./reports";
 import { image } from "./pages";
 
 async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -29,8 +30,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       return json(await md.search(q, skip, catalog[1] === "manhwa"), 200, true);
     }
-    const imageMatch = path.match(/^\/anikatha\/image\/([0-9a-f-]+)\/([0-9a-f-]+)\/(\d+)\.jpg$/i);
-    if (imageMatch) return await image(env, ctx, imageMatch[1].toLowerCase(), imageMatch[2].toLowerCase(), imageMatch[3]);
+    const imageMatch = path.match(/^\/anikatha\/media\/manga\/([0-9a-f-]+)\/(\d+)$/i);
+    if (imageMatch) return await image(env, ctx, imageMatch[1].toLowerCase(), (u.searchParams.get("assignment") ?? "").toLowerCase(), imageMatch[2]);
     const match = path.match(/^\/anikatha\/(meta|chapters|pages)\/manga\/([^/]+)\.json$/);
     if (match) {
       const [, resource, raw] = match;

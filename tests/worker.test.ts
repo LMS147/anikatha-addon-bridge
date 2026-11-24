@@ -39,7 +39,7 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
   it("resolves search, encoded ids, chapters, and ordered pages", async () => {
     let r = await call("/anikatha/manifest.json");
     const manifest = await r.json();
-    expect(manifest.types).toEqual(["anime", "manga"]); expect(manifest.anikathaProtocolVersion).toBe(1);
+    expect(manifest.types).toEqual(["manga"]); expect(manifest.anikathaProtocolVersion).toBe(1);
     expect(manifest.catalogs.map((catalog: { id: string }) => catalog.id)).toEqual(["mangadex", "manhwa"]);
     r = await call("/anikatha/catalog/manga/mangadex/search=one%26two&skip=20.json");
     expect(r.status).toBe(200);
@@ -58,7 +58,9 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     r = await call(`/anikatha/pages/manga/md%3Ach%3A${chapter}.json`);
     expect(r.status).toBe(200); expect(r.headers.get("cache-control")).toBe("no-store");
     const data = await r.json();
-    expect(data.pages).toEqual(["https://uploads.mangadex.org/data/abc123/1-a.png", "https://uploads.mangadex.org/data/abc123/2-b.png"]);
+    expect(data.pages).toHaveLength(2);
+    expect(data.pages[0]).toMatch(new RegExp(`^https://bridge\\.example/anikatha/media/manga/${chapter}/0\\?assignment=[0-9a-f-]{36}$`));
+    expect(data.pages[1]).toMatch(new RegExp(`^https://bridge\\.example/anikatha/media/manga/${chapter}/1\\?assignment=[0-9a-f-]{36}$`));
     expect(Date.parse(data.expiresAt) - Date.now()).toBeGreaterThan(590_000);
     expect(calls.some(u => u.includes("forcePort443=true"))).toBe(true);
     expect(env.CACHE.put).toHaveBeenCalledWith(expect.any(String), expect.any(String), { expirationTtl: 600 });
@@ -146,4 +148,80 @@ it("page assignments expire and are removed by the alarm", async () => {
     await page.alarm();
     expect(storage.size).toBe(0);
   } finally { vi.useRealTimers(); }
+});
+
+it("accepts only signatures recognised by AniKatha for each supported image type", async () => {
+  const { imageSignature } = await import("../src/pages");
+  const ascii = (v: string) => new TextEncoder().encode(v);
+  expect(imageSignature(new Uint8Array([137,80,78,71,13,10,26,10]), "image/png")).toBe(true);
+  expect(imageSignature(new Uint8Array([255,216,255]), "image/jpeg")).toBe(true);
+  expect(imageSignature(ascii("GIF89a"), "image/gif")).toBe(true);
+  expect(imageSignature(ascii("RIFF1234WEBP"), "image/webp")).toBe(true);
+  expect(imageSignature(ascii("1234ftypavif"), "image/avif")).toBe(true);
+  expect(imageSignature(ascii("not an image"), "image/png")).toBe(false);
+  expect(imageSignature(ascii("GIF89a"), "image/jpeg")).toBe(false);
+});
+
+it("queues reports and enforces the global interval, including retries", async () => {
+  const { ReportQueue } = await import("../src/reports");
+  const data = new Map<string, unknown>();
+  let alarmTime: number | null = null;
+  const state = { storage: {
+    get: async (key: string) => structuredClone(data.get(key)),
+    put: async (key: string | Record<string, unknown>, value?: unknown) => {
+      if (typeof key === "string") data.set(key, structuredClone(value));
+      else for (const [k,v] of Object.entries(key)) data.set(k, structuredClone(v));
+    },
+    getAlarm: async () => alarmTime,
+    setAlarm: async (time: number) => { alarmTime = time; }
+  }, blockConcurrencyWhile: async <T>(fn: () => Promise<T>) => fn() } as unknown as DurableObjectState;
+  const queue = new ReportQueue(state);
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const reportFetch = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", reportFetch);
+    for (let n = 0; n < 2; n++) {
+      const reserve = await queue.fetch(new Request("https://queue/reserve", { method: "POST", body: JSON.stringify({ url: `https://uploads.mangadex.org/${n}` }) }));
+      const ticket = await reserve.json();
+      await queue.fetch(new Request("https://queue/complete", { method: "POST", body: JSON.stringify({ id: ticket.id, success: true, cached: false, bytes: 68, duration: 42 }) }));
+    }
+    alarmTime = null; await queue.alarm();
+    expect(reportFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(reportFetch.mock.calls[0][1].body)).toMatchObject({ success: true, bytes: 68, duration: 42 });
+    alarmTime = null; vi.advanceTimersByTime(6099); await queue.alarm();
+    expect(reportFetch).toHaveBeenCalledTimes(1);
+    alarmTime = null; vi.advanceTimersByTime(1); await queue.alarm();
+    expect(reportFetch).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); vi.unstubAllGlobals(); }
+});
+
+it("keeps failed reports queued and applies Retry-After without exceeding the rate", async () => {
+  const { ReportQueue } = await import("../src/reports");
+  const storage = new Map<string, unknown>();
+  let alarmTime: number | null = null;
+  const state = { storage: {
+    get: async (key: string) => structuredClone(storage.get(key)),
+    put: async (key: string | Record<string, unknown>, value?: unknown) => {
+      if (typeof key === "string") storage.set(key, structuredClone(value));
+      else for (const [k,v] of Object.entries(key)) storage.set(k, structuredClone(v));
+    }, getAlarm: async () => alarmTime, setAlarm: async (time: number) => { alarmTime = time; }
+  }, blockConcurrencyWhile: async <T>(fn: () => Promise<T>) => fn() } as unknown as DurableObjectState;
+  const queue = new ReportQueue(state);
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const reportFetch = vi.fn().mockResolvedValueOnce(new Response(null, { status: 429, headers: { "Retry-After": "30" } })).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", reportFetch);
+    const result = await queue.fetch(new Request("https://queue/reserve", { method: "POST", body: JSON.stringify({ url: "https://uploads.mangadex.org/test" }) }));
+    const ticket = await result.json();
+    await queue.fetch(new Request("https://queue/complete", { method: "POST", body: JSON.stringify({ id: ticket.id, success: false, cached: false, bytes: 0, duration: 12 }) }));
+    alarmTime = null; await queue.alarm();
+    expect((storage.get("jobs") as unknown[]).length).toBe(1);
+    alarmTime = null; vi.advanceTimersByTime(29_999); await queue.alarm();
+    expect(reportFetch).toHaveBeenCalledTimes(1);
+    alarmTime = null; vi.advanceTimersByTime(1); await queue.alarm();
+    expect(reportFetch).toHaveBeenCalledTimes(2);
+    expect((storage.get("jobs") as unknown[]).length).toBe(0);
+  } finally { vi.useRealTimers(); vi.unstubAllGlobals(); }
 });

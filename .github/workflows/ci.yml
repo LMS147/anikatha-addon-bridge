@@ -24,5 +24,5 @@ jobs:
           pid=$!
           trap 'kill "$pid" 2>/dev/null || true' EXIT
           curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:8787/anikatha/manifest.json -o /tmp/manifest.json
-          node -e 'const m=require("/tmp/manifest.json"); if (m.anikathaProtocolVersion!==1 || m.types.join(",")!=="anime,manga") process.exit(1)'
+          node -e 'const m=require("/tmp/manifest.json"); if (m.anikathaProtocolVersion!==1 || m.types.join(",")!=="manga") process.exit(1)'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/anikatha/stream/anime/ep%3Anone.json)" = 404

@@ -59,10 +59,11 @@ export class MangaDex {
     }
     return result;
   }
-  async search(q: string, skip: number) {
+  async search(q: string, skip: number, manhwa = false) {
     const params = new URLSearchParams({ limit: "20", offset: String(skip) });
     params.append("contentRating[]", "safe"); params.append("contentRating[]", "suggestive");
     params.append("includes[]", "cover_art");
+    if (manhwa) params.append("originalLanguage[]", "ko");
     if (q) params.set("title", q);
     const data = await this.get<Collection>(`manga?${params}`, true);
     guard(data && Array.isArray(data.data));

@@ -40,6 +40,7 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     let r = await call("/anikatha/manifest.json");
     const manifest = await r.json();
     expect(manifest.types).toEqual(["anime", "manga"]); expect(manifest.anikathaProtocolVersion).toBe(1);
+    expect(manifest.catalogs.map((catalog: { id: string }) => catalog.id)).toEqual(["mangadex", "manhwa"]);
     r = await call("/anikatha/catalog/manga/mangadex/search=one%26two&skip=20.json");
     expect(r.status).toBe(200);
     const item = (await r.json()).metas[0];
@@ -61,6 +62,24 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     expect(Date.parse(data.expiresAt) - Date.now()).toBeGreaterThan(590_000);
     expect(calls.some(u => u.includes("forcePort443=true"))).toBe(true);
     expect(env.CACHE.put).toHaveBeenCalledWith(expect.any(String), expect.any(String), { expirationTtl: 600 });
+  });
+  it("supports browsing and searching the Korean-original manhwa catalog separately", async () => {
+    const browse = await call("/anikatha/catalog/manga/manhwa.json");
+    expect(browse.status).toBe(200);
+    expect((await browse.json()).metas[0].type).toBe("manga");
+    expect(new URL(calls[0]).searchParams.getAll("originalLanguage[]")).toEqual(["ko"]);
+    const search = await call("/anikatha/catalog/manga/manhwa/search=love%20%26%20war&skip=40.json");
+    expect(search.status).toBe(200);
+    const query = new URL(calls[1]).searchParams;
+    expect(query.get("title")).toBe("love & war");
+    expect(query.get("offset")).toBe("40");
+    expect(query.getAll("originalLanguage[]")).toEqual(["ko"]);
+    expect((await call("/anikatha/catalog/manga/manhwa/skip=20.json")).status).toBe(200);
+    expect(new URL(calls[2]).searchParams.get("offset")).toBe("20");
+    expect((await call("/anikatha/catalog/manga/mangadex.json")).status).toBe(200);
+    expect(new URL(calls[3]).searchParams.has("originalLanguage[]")).toBe(false);
+    expect((await call("/anikatha/catalog/manga/not-a-catalog.json")).status).toBe(404);
+    expect((await call("/anikatha/catalog/manga/manhwa/skip=99999.json")).status).toBe(400);
   });
   it("omits missing or unsafe cover filenames", async () => {
     const source = fixture("search");

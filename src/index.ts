@@ -11,12 +11,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   if (path === "/anikatha/manifest.json") return json(manifest, 200, true);
   const md = new MangaDex(env, Date.now() + 17_000);
   try {
-    if (path === "/anikatha/catalog/manga/mangadex.json") return json(await md.search("", 0), 200, true);
-    const catalog = path.match(/^\/anikatha\/catalog\/manga\/mangadex\/([^/]+)\.json$/);
+    const browse = path.match(/^\/anikatha\/catalog\/manga\/(mangadex|manhwa)\.json$/);
+    if (browse) return json(await md.search("", 0, browse[1] === "manhwa"), 200, true);
+    const catalog = path.match(/^\/anikatha\/catalog\/manga\/(mangadex|manhwa)\/([^/]+)\.json$/);
     if (catalog) {
       let q = "", skip = 0;
       const seen = new Set<string>();
-      for (const part of catalog[1].split("&")) {
+      for (const part of catalog[2].split("&")) {
         const i = part.indexOf("=");
         if (i < 0) throw new Failure(400, "Invalid extras");
         const key = decodeURIComponent(part.slice(0, i)), value = decodeURIComponent(part.slice(i + 1));
@@ -26,7 +27,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         else if (key === "skip" && /^\d{1,4}$/.test(value) && Number(value) <= 9980) skip = Number(value);
         else throw new Failure(400, "Invalid extras");
       }
-      return json(await md.search(q, skip), 200, true);
+      return json(await md.search(q, skip, catalog[1] === "manhwa"), 200, true);
     }
     const imageMatch = path.match(/^\/anikatha\/image\/([0-9a-f-]+)\/([0-9a-f-]+)\/(\d+)\.jpg$/i);
     if (imageMatch) return await image(env, ctx, imageMatch[1].toLowerCase(), imageMatch[2].toLowerCase(), imageMatch[3]);

@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "id": "tt1254207",
+    "name": "Big Buck Bunny",
+    "year": 2008,
+    "poster": "https://image.tmdb.org/t/p/w600_and_h900_bestv2/uVEFQvFMMsg4e6yb03xOfVsDz4o.jpg",
+    "posterShape": "regular",
+    "logo": "https://fanart.tv/fanart/movies/10378/hdmovielogo/big-buck-bunny-5054df8a36bfa.png",
+    "background": "https://image.tmdb.org/t/p/original/aHLST0g8sOE1ixCxRDgM35SKwwp.jpg",
+    "description": "A giant rabbit takes revenge on three bullying rodents in this Blender Foundation open movie. Shared sample content: AniKatha uses Big Buck Bunny as its built-in trailer sample, and this bridge serves the same title to Stremio.",
+    "genres": ["Animation", "Comedy", "Family"],
+    "runtime": "10 min",
+    "isFree": true,
+    "type": "movie"
+  },
+  "cacheMaxAge": 86400
+}

@@ -5,7 +5,7 @@ compatibility_date = "2026-07-30"
 # Create a KV namespace and replace the ID before deploying.
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "anikatha-cache"
 
 [[durable_objects.bindings]]
 name = "RATE_GATE"

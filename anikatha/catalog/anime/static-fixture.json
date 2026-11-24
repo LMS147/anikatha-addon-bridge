@@ -1,0 +1,8 @@
+{
+  "metas": [{
+    "id": "bridge-fixture-bbb",
+    "type": "anime",
+    "name": "Big Buck Bunny (compatibility fixture)",
+    "description": "A non-anime test clip presented as anime solely to test AniKatha's HTTP add-on routing."
+  }]
+}

@@ -1,129 +1,51 @@
-# AniKatha Bridge
+# AniKatha Bridge: static compatibility fixtures
 
-Static Stremio add-on that **AniKatha** (Android) can also install. One public
-HTTPS manifest URL works in both apps. There is no backend, no build step, and
-no dependencies — every response is a plain JSON file served as-is.
+**Phase 1 is static-only. Providers: `none / static-local-fixture`.** No live provider APIs, scraping, plugins or server runtime are integrated. This repository hosts separate JSON fixtures for AniKatha and Stremio, without dependencies or a build step. It is not a real anime catalogue.
 
-## What this is
+## AniKatha fixture
 
-- A **static add-on**: `manifest.json` + catalog/meta/stream JSON files,
-  following the [Stremio static add-on example](https://github.com/Stremio/stremio-static-addon-example).
-- A **bridge**: Stremio installs it as a normal add-on; AniKatha installs the
-  same manifest URL via **Profile → Content & discovery → Manage add-ons**
-  (AniKatha validates that the manifest has an `id` and stores it locally).
-- Sample content is **Big Buck Bunny** (`tt1254207`) — the same title AniKatha
-  uses as its built-in trailer sample — with a public HTTPS sample stream.
+Install the **public HTTPS** manifest (after deployment):
 
-## Repository layout
+`https://lms147.github.io/anikatha-addon-bridge/anikatha/manifest.json`
 
-```
-manifest.json                        Add-on manifest (id, version, catalogs, resources)
-index.html                           Landing page with Stremio install link + AniKatha steps
-catalog/movie/anikatha-bridge.json   Catalog response (must match catalog id in manifest)
-meta/movie/tt1254207.json            Details response for the catalog entry
-stream/movie/tt1254207.json          Stream response for the catalog entry
-scripts/validate.py                  Stdlib-only checks (manifest shape + cross-references)
-scripts/serve.py                     Dev server with CORS + no-cache headers
-.github/workflows/pages.yml          GitHub Pages deploy on push to main
-.nojekyll                            Serve files as-is (no Jekyll processing)
-```
+The original root `/manifest.json` remains the Stremio `movie` fixture; AniKatha does **not** route its movie resources. The separate AniKatha manifest declares `anime` and `catalog`, `meta`, `stream`, matching [AniKatha's HTTP contract](https://github.com/LMS147/AniKatha/blob/c00cc8e56a266644d0eb31f4eba8f63c0367fac6/docs/HTTP-ADDONS.md). Paths relative to the AniKatha manifest directory are:
 
-## 1. Test locally (before deploying)
+- `catalog/anime/static-fixture.json` → title `bridge-fixture-bbb`
+- `meta/anime/bridge-fixture-bbb.json` → episode `bridge-fixture-bbb-clip`
+- `stream/anime/bridge-fixture-bbb-clip.json` → direct HTTPS MP4
 
-Requires Python 3 (stdlib only — nothing to install).
+Big Buck Bunny is a Blender Foundation short, **not anime**. We classify this one fixture as `anime` only to exercise AniKatha's routing. The Google Cloud Storage MP4 and existing TMDB image URLs are static media hosts, not API integrations. No AniList mapping is asserted. The root movie fixture's IMDb ID is only an identifier.
 
-```bash
-python3 scripts/validate.py          # manifest + cross-reference checks
-python3 scripts/serve.py 8080        # CORS + no-cache dev server
+### Install and read test
+
+1. After deploying, check that the manifest and three paths above return HTTP 200 JSON over HTTPS without redirects. Unknown units should return 404.
+2. AniKatha → **Profile → Content & discovery → Manage add-ons** → add the AniKatha URL above.
+3. Browse its **Static compatibility fixture** catalogue, open Big Buck Bunny, select **Sample clip**, and try playback (and optionally download). Confirm the source persists after reopening the app.
+4. If something fails, record the AniKatha version, endpoint and error. Local tests check the HTTP shapes, not the actual Android installation, media availability or playback.
+
+Manifest and resource responses must stay under 256 KiB. Use public HTTPS URLs without redirects, credentials, fragments, private IPs or `.local` hosts. Downloadable streams require a stable ID and direct HTTPS MP4; subtitles must be HTTPS VTT/SRT. Future expiring stream/page URLs must declare `expiresAt`. Static file hosting returns 404 for missing resources.
+
+## Local verification
+
+Python 3 only:
+
+```sh
+python3 scripts/validate.py
+python3 -m unittest discover -s tests -v
+python3 scripts/serve.py 8080
 ```
 
-Then verify each endpoint:
+The tests start a temporary local server and check the manifest → catalog → meta → episode stream chain, JSON size and missing-resource 404s. Local HTTP is for automated checks only; AniKatha requires public HTTPS. The development server adds CORS and no-store headers.
 
-```bash
-curl -s http://localhost:8080/manifest.json
-curl -s http://localhost:8080/catalog/movie/anikatha-bridge.json
-curl -s http://localhost:8080/meta/movie/tt1254207.json
-curl -s http://localhost:8080/stream/movie/tt1254207.json
-```
+## Deployment
 
-Expected: all return HTTP 200 with valid JSON. The dev server sends
-`Access-Control-Allow-Origin: *` and `Cache-Control: no-store`, matching
-GitHub Pages behaviour and preventing stale caches while you edit.
+Merge the working branch into `main`, then under **Settings → Pages** select **GitHub Actions**. `.github/workflows/pages.yml` validates both fixtures, uploads the repository, and deploys in a separate job. Only `main` may deploy to the protected `github-pages` environment. The duplicate `static.yml` is removed by this change. Check the Actions run and then the URLs; the test branch cannot demonstrate production deployment under that protection rule.
 
-**Stremio (desktop) local test:** open Stremio → Add-ons → Add-on Repository
-URL → paste `http://localhost:8080/manifest.json` → Install. You should see
-the **AniKatha Bridge** catalog with Big Buck Bunny, and playback should start
-the sample stream.
+The root `https://lms147.github.io/anikatha-addon-bridge/manifest.json` remains the Stremio fixture. Use its landing page install link or paste that URL in Stremio; it is not the AniKatha install URL. The landing page lists both.
 
-> Android (Stremio or AniKatha) requires a public **HTTPS** URL — use the
-> deployed GitHub Pages URL from step 2, or a tunnel (e.g. `localtunnel`).
+## Later phases (not implemented)
 
-## 2. Deploy to GitHub Pages
-
-1. Merge this branch into `main` and push (the workflow deploys from `main`).
-2. In the repo: **Settings → Pages → Source: GitHub Actions**.
-3. Wait for the **Deploy static add-on to GitHub Pages** Actions run to finish
-   (Actions tab). The environment URL is printed in the run summary.
-4. Open the Pages URL, e.g. `https://<user>.github.io/anikatha-addon-bridge/`
-   — the landing page should load with the install button.
-5. Confirm `https://<user>.github.io/anikatha-addon-bridge/manifest.json`
-   returns the manifest JSON. That URL is your add-on repository URL.
-
-Every push to `main` redeploys automatically. To force a refresh in Stremio
-after changes, bump `version` in `manifest.json` (Stremio caches manifests).
-
-## 3. Install in Stremio
-
-- Open the landing page and click **Install in Stremio** (uses the
-  `stremio://` link), **or**
-- Stremio → Add-ons → Add-on Repository URL → paste
-  `https://<user>.github.io/anikatha-addon-bridge/manifest.json` → Install.
-
-## 4. Install in AniKatha (Android)
-
-1. Copy the public HTTPS manifest URL from the landing page.
-2. Open AniKatha → **Profile → Content & discovery → Manage add-ons**.
-3. Paste the URL and tap **Add source**. “AniKatha Bridge” appears in the list.
-4. Close and reopen AniKatha — the entry must still be listed (persistence).
-5. Submit the same URL again — the list must still show only one entry
-   (de-duplication). Remove it and reopen — it must stay removed.
-
-> Note: AniKatha’s add-on catalog playback is handled by its own adapters
-> (e.g. Jikan, YouTube episodes). This bridge proves the shared install/store
-> flow; content playback in AniKatha is a separate implementation.
-
-## Testing checklist
-
-| # | Check | Expected |
-|---|-------|----------|
-| 1 | `python3 scripts/validate.py` | All checks PASS |
-| 2 | `curl` each of the 4 JSON endpoints locally | HTTP 200, valid JSON |
-| 3 | Pages URL loads landing page | Install button + manifest URL shown |
-| 4 | `/manifest.json` on Pages | Valid JSON, `id` = `org.anikatha.addon-bridge` |
-| 5 | Stremio install from Pages URL | Catalog appears, BBB plays |
-| 6 | AniKatha Add source with Pages URL | Entry listed, persists after reopen |
-| 7 | Re-add same URL in AniKatha | Still exactly one entry |
-| 8 | Remove entry in AniKatha, reopen | Entry stays removed |
-
-## Extending
-
-To add a title, add one entry to `catalog/movie/anikatha-bridge.json` and
-create matching `meta/movie/<id>.json` and `stream/movie/<id>.json` files
-(`<id>` must match exactly — `validate.py` checks this). Then bump `version`
-in `manifest.json` and push to `main`.
-
-## Troubleshooting
-
-- **Stremio shows old data:** bump `version` in `manifest.json`, push, then
-  reinstall the add-on.
-- **404 on Pages:** confirm Pages source is **GitHub Actions** and the Actions
-  run succeeded; `.nojekyll` is already in place.
-- **AniKatha rejects the URL:** it must be public HTTPS ending in
-  `/manifest.json`. The raw GitHub URL
-  (`https://raw.githubusercontent.com/<user>/anikatha-addon-bridge/main/manifest.json`)
-  also works as a fallback.
-- **Android cleartext errors:** always use the HTTPS Pages URL, never
-  `http://localhost` from a phone.
+Only **after the static AniKatha install/read test passes**, the first planned new upstream is MangaDex API v5 chapter feeds and at-home page URLs, using `expiresAt` for short-lived URLs. Phase 2 is planned as C# / ASP.NET Core Minimal API, not Node. AniList and Jikan are already built into AniKatha and may be considered only for verified cross-service mappings; SIMKL mapping and AniSkip enrichment are later considerations. YouTube episodes are also already built in. This bridge does not re-expose these built-ins or use EverythingMoe (a directory), Comix, KotoPlay, torrents, XDCC, DDL or scraper sites. No secrets belong in manifests, install URLs, or checked-in environment files.
 
 ## License
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AniKatha Bridge — Stremio add-on</title>
+<title>AniKatha Bridge — static fixtures</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -43,7 +43,7 @@
 <body>
 <main>
   <h1>AniKatha Bridge</h1>
-  <p class="sub">Static Stremio add-on that AniKatha can also install. No backend, no build step.</p>
+  <p class="sub">Separate static compatibility fixtures for AniKatha and Stremio. No live providers or backend.</p>
 
   <section class="card">
     <h2>Install in Stremio</h2>
@@ -58,28 +58,29 @@
 
   <section class="card">
     <h2>Install in AniKatha (Android)</h2>
+    <p>Use the separate anime-routing fixture manifest (not the Stremio movie manifest):</p>
+    <span class="url" id="anikatha-url">anikatha/manifest.json</span>
+    <button class="btn secondary" id="copy-anikatha" type="button">Copy AniKatha URL</button>
+    <p id="anikatha-status" class="note" aria-live="polite"></p>
     <ol>
-      <li>Copy the manifest URL above (it must be a public <code>https://</code> URL).</li>
       <li>Open AniKatha → <strong>Profile → Content &amp; discovery → Manage add-ons</strong>.</li>
-      <li>Paste the URL and tap <strong>Add source</strong>. “AniKatha Bridge” should appear in the list.</li>
-      <li>Close and reopen AniKatha — the entry should still be listed.</li>
+      <li>Paste the public HTTPS AniKatha manifest URL and tap <strong>Add source</strong>.</li>
+      <li>Browse the static compatibility fixture, open its sample title and play its clip.</li>
     </ol>
-    <p class="note">AniKatha validates that the manifest has an <code>id</code> and stores it locally. Catalog playback from add-ons is handled by AniKatha’s own adapters; this bridge proves the shared install flow.</p>
+    <p class="note">Big Buck Bunny is not anime; its anime type is used only to test AniKatha routing. Playback depends on the app and media host. No providers are integrated.</p>
   </section>
 
   <section class="card">
-    <h2>What is served</h2>
-    <ol>
-      <li><code>/manifest.json</code> — add-on manifest</li>
-      <li><code>/catalog/movie/anikatha-bridge.json</code> — movie catalog</li>
-      <li><code>/meta/movie/tt1254207.json</code> — Big Buck Bunny details</li>
-      <li><code>/stream/movie/tt1254207.json</code> — sample stream</li>
-    </ol>
+    <h2>Static endpoints</h2>
+    <p>AniKatha: <code>anikatha/manifest.json</code>, <code>anikatha/catalog/anime/static-fixture.json</code>, <code>anikatha/meta/anime/bridge-fixture-bbb.json</code>, and <code>anikatha/stream/anime/bridge-fixture-bbb-clip.json</code>.</p>
+    <p>Stremio: <code>manifest.json</code> and the existing <code>movie</code> paths.</p>
   </section>
 </main>
 <script>
 (function () {
   var manifestUrl = new URL("manifest.json", window.location.href).href;
+  var anikathaUrl = new URL("anikatha/manifest.json", window.location.href).href;
+  document.getElementById("anikatha-url").textContent = anikathaUrl;
   var urlEl = document.getElementById("manifest-url");
   var linkEl = document.getElementById("install-link");
   var statusEl = document.getElementById("status");
@@ -95,17 +96,17 @@
     statusEl.textContent = "Manifest URL is ready (live version check unavailable on this page).";
   });
 
-  document.getElementById("copy-btn").addEventListener("click", function () {
-    function done() { statusEl.textContent = "Manifest URL copied."; }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(manifestUrl).then(done, done);
-    } else {
-      var ta = document.createElement("textarea");
-      ta.value = manifestUrl; document.body.appendChild(ta);
-      ta.select(); try { document.execCommand("copy"); } catch (e) {}
-      document.body.removeChild(ta); done();
+  function copyUrl(url, status) {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      status.textContent = "Copy the URL shown above manually.";
+      return;
     }
-  });
+    navigator.clipboard.writeText(url).then(function () {
+      status.textContent = "Manifest URL copied.";
+    }).catch(function () { status.textContent = "Copy failed; select the URL above and copy it manually."; });
+  }
+  document.getElementById("copy-btn").addEventListener("click", function () { copyUrl(manifestUrl, statusEl); });
+  document.getElementById("copy-anikatha").addEventListener("click", function () { copyUrl(anikathaUrl, document.getElementById("anikatha-status")); });
 })();
 </script>
 </body>

@@ -1,0 +1,9 @@
+{
+  "streams": [{
+    "id": "bridge-fixture-bbb-mp4",
+    "name": "Big Buck Bunny sample MP4",
+    "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    "mediaType": "video/mp4",
+    "downloadable": true
+  }]
+}

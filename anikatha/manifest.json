@@ -1,0 +1,10 @@
+{
+  "id": "org.anikatha.addon-bridge.static-fixture",
+  "version": "1.0.0",
+  "anikathaProtocolVersion": 1,
+  "name": "AniKatha Bridge Static Fixture",
+  "description": "A static compatibility fixture, not an anime catalogue or live provider.",
+  "types": ["anime"],
+  "resources": ["catalog", "meta", "stream"],
+  "catalogs": [{"type": "anime", "id": "static-fixture", "name": "Static compatibility fixture"}]
+}

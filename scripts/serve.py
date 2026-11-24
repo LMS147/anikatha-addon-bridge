@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -38,6 +37,7 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 if __name__ == "__main__":
+    PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
     with Server(("0.0.0.0", PORT), Handler) as httpd:
         print(f"Serving {ROOT} on http://0.0.0.0:{PORT} (CORS on, no-cache on)")
         print(f"Manifest: http://localhost:{PORT}/manifest.json")

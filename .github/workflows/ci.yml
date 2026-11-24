@@ -18,6 +18,10 @@ jobs:
         run: |
           set -o pipefail
           dotnet test tests/AniKathaAddonBridge.Tests/AniKathaAddonBridge.Tests.csproj --configuration Release 2>&1 | tee /tmp/dotnet-test.log || {
-            while IFS= read -r line; do echo "::error::$line"; done < <(tail -30 /tmp/dotnet-test.log)
+            details=$(tail -50 /tmp/dotnet-test.log)
+            details=${details//%/%25}
+            details=${details//$'\n'/%0A}
+            details=${details//$'\r'/%0D}
+            echo "::error::$details"
             exit 1
           }

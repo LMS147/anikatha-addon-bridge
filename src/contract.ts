@@ -1,19 +1,4 @@
 export const MAX_BYTES = 256 * 1024;
-export const manifest = {
-  id: "org.anikatha.addon-bridge.mangadex", version: "3.2.0", anikathaProtocolVersion: 1,
-  name: "AniKatha MangaDex Bridge", description: "MangaDex manga and manhwa discovery and reading.",
-  types: ["manga"],
-  resources: [
-    { name: "catalog", types: ["manga"] },
-    { name: "meta", types: ["manga"], idPrefixes: ["md:"] },
-    { name: "chapters", types: ["manga"], idPrefixes: ["md:"] },
-    { name: "pages", types: ["manga"], idPrefixes: ["md:ch:"] }
-  ],
-  catalogs: [
-    { type: "manga", id: "mangadex", name: "MangaDex", extra: [{ name: "search", isRequired: false }, { name: "skip", isRequired: false }] },
-    { type: "manga", id: "manhwa", name: "Manhwa (Korean originals)", extra: [{ name: "search", isRequired: false }, { name: "skip", isRequired: false }] }
-  ]
-};
 
 export class Failure extends Error { constructor(public status: number, message: string) { super(message); } }
 export function json(data: unknown, status = 200, cache = false): Response {

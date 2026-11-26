@@ -6,6 +6,33 @@ Native TypeScript Cloudflare Worker for AniKatha HTTP add-ons. MangaDex API v5 i
 
 The Worker exposes `/anikatha/manifest.json`, MangaDex manga and manhwa catalogs with `search`/`skip`, manga metadata with cover art, a chapter feed, and page resolution. The Manhwa catalog uses MangaDex’s `originalLanguage[]=ko` filter (Korean originals) and remains type `manga` for AniKatha compatibility. This filter does not guarantee that every result has chapters in your preferred translation language; available chapters come from MangaDex. MangaDex covers are returned when its expanded cover relationship contains a valid filename. IDs use `md:<uuid>` and `md:ch:<uuid>`; encoded IDs and catalog extras are supported. The manifest advertises only manga because there is **no verified anime catalog, mapping, or licensed source yet**. Anime meta/stream endpoints return 404; no placeholder catalog or YouTube watch URL is exposed. AniList/Jikan/SIMKL mappings and AniSkip are not implemented. AniKatha's existing AniList, Jikan and YouTube functionality is not re-exposed.
 
+### Catalog metadata and Browse Manga
+
+The Worker returns the same normalized title metadata in `metas[]`, `meta/manga/{titleId}.json`, and the `meta` object alongside chapters. A field is omitted when it cannot be verified. The stable `md:` and `md:ch:` identifiers and their resource paths remain the basis of the reader and saved progress.
+
+| JSON field | Type and source |
+|---|---|
+| `genres` | Deduplicated string array of names from MangaDex's `genre` group. |
+| `tags`, `tagIds` | String arrays for non-genre tag names and their stable MangaDex UUIDs. Format, theme, and content tags remain searchable as tags. |
+| `format` | One-shot, Doujinshi, Anthology, 4-Koma, or Web Comic, from an explicit MangaDex format tag. If more than one applies, the first in that order is used. |
+| `year` | Positive integer from the upstream release year. |
+| `status` | Publishing, Completed, Hiatus, or Cancelled, mapped from the MangaDex publication status. |
+| `communityScore` | Integer 1–100, from MangaDex's weighted community rating multiplied by 10 and rounded. A title needs a real user average to qualify. A missing score stays absent. |
+| `rank` | Positive, 1-based index within a particular eligible Top Rated catalog snapshot. Details and ordinary catalog entries have no catalog rank. |
+| `poster` | Absolute HTTPS URL to the primary cover's 512-pixel MangaDex thumbnail, when a valid filename is available. |
+
+Catalog IDs `mangadex` and `manhwa` remain ordinary browse/search feeds. MangaDex records do not supply a verified Manga, Manhwa, Manhua, or Light Novel classification, so the Worker leaves those specific classifications absent and does not advertise the associated popularity shelves. Release status Upcoming also has no MangaDex mapping.
+
+The `top-rated` catalog declares `ranking: "score"` for AniKatha's Top Rated shelf. It queries MangaDex's rating order, uses creation time as a secondary order, and obtains community scores in a single batch. It excludes entries without a verified rating before assigning ranks and slicing into 20-title pages. Each filter combination has a 10-minute KV snapshot of up to the first 60 upstream candidates. Rank is specific to that snapshot. The offset-only protocol can start a new snapshot after expiry, so rank and entries may change then.
+
+All three catalogs support `search`, `skip`, `genre`, `tag`, `year`, `format`, and `status`. Genre and tag accept an unambiguous MangaDex name or UUID. Year accepts a four-digit release year. Format and status accept the values in the manifest. Filters are combined before pagination. For example, `/anikatha/catalog/manga/manhwa/genre=Action&status=Completed&skip=20.json` selects page two of completed Korean-original action results. In AniKatha these extras are available through the source-specific catalog controls.
+
+Ordinary cards and details read cached scores by title ID and request missing scores in a batch. They wait up to 250 ms for the batch and can finish with the available facts while the Worker completes the enrichment. The Top Rated feed waits for verified scores and reports a retryable error if the upstream request fails.
+
+AniKatha's current ranked cards use the add-on's order, cover, year, format, and community score. The HTTP contract exposes `rank`, `tags`, and `tagIds` in the responses. The current provider details view displays genres and publication status, and does not show rank or tag chips from these fields.
+
+[Example responses from recorded MangaDex data](docs/catalog-metadata-examples.md) · [MangaDex API specification](https://api.mangadex.org/docs/static/api.yaml)
+
 **MangaDex@Home reporting:** The Worker obtains at-home assignments from MangaDex without putting them in KV. Its `/anikatha/media/manga/{chapterId}/{index}?assignment=…` endpoint streams supported images through a restricted proxy, validates MIME type and AniKatha-compatible image signatures, and queues a report containing URL, success, cache status, bytes and duration for every image retrieval. The assignment parameter is a public identifier, not a secret. The durable report queue sends at most one request every 6.1 seconds, retries failures with backoff, and fails closed before image retrieval if full or unavailable. Reports are at-least-once: a crash after a successful upstream POST can cause a duplicate. Queue failures require monitoring; delivery is not guaranteed while MangaDex is unavailable.
 
 For SSRF protection, only HTTPS port 443 image hosts under `mangadex.org` and `*.mangadex.network` are accepted. Other at-home hosts still return **503**, rather than becoming an arbitrary image proxy. Assignments expire after ten minutes; use Refresh Sources when a page URL expires. The Worker checks image signatures that match AniKatha's detection logic; complete-image validation, live reading, resume and downloads must still be verified in AniKatha on a device.

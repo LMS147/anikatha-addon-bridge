@@ -15,6 +15,8 @@ it("runs Worker + real KV + global Durable Object with upstream fully mocked", a
       urls.push(request.url);
       const url = new URL(request.url);
       if (url.hostname !== "api.mangadex.org") return new Response("Unexpected outbound host", { status: 500 });
+      if (url.pathname === "/statistics/manga")
+        return Response.json({ statistics: { [title]: { rating: { average: 8, bayesian: 7.9 } } } });
       const name = url.pathname === "/manga" ? "search" : url.pathname === `/manga/${title}` ? "manga" : url.pathname === `/manga/${title}/feed` ? "feed" : url.pathname === `/at-home/server/${chapter}` ? "at-home" : null;
       return name ? new Response(sample(name), { headers: { "content-type": "application/json" } }) : new Response(null, { status: 404 });
     }
@@ -28,7 +30,7 @@ it("runs Worker + real KV + global Durable Object with upstream fully mocked", a
     expect(new URL(urls[0]).searchParams.get("title")).toBe("one&two");
     const manhwa = await fetch("/anikatha/catalog/manga/manhwa/search=story&skip=20.json");
     expect(manhwa.status).toBe(200);
-    const manhwaRequest = new URL(urls[1]);
+    const manhwaRequest = new URL(urls.filter(url => new URL(url).pathname === "/manga")[1]);
     expect(manhwaRequest.searchParams.getAll("originalLanguage[]")).toEqual(["ko"]);
     expect(manhwaRequest.searchParams.get("title")).toBe("story");
     expect(manhwaRequest.searchParams.get("offset")).toBe("20");

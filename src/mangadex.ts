@@ -1,6 +1,7 @@
 import { Failure, MAX_BYTES, imageBase, segment } from "./contract";
 export interface Env { CACHE: KVNamespace; RATE_GATE: DurableObjectNamespace; PAGE_STORE: DurableObjectNamespace; REPORT_QUEUE: DurableObjectNamespace; }
 import { pageStore } from "./pages";
+import { verifiedShelf, type VerifiedShelf } from "./verified-formats";
 import { applyFilters, normalizedTags, title, PAGE_SIZE, RATED_LIMIT, type CatalogTitle, type Entity } from "./catalog";
 
 type Collection = { data: Entity[]; total: number };
@@ -20,7 +21,7 @@ function communityScore(rating: Rating | undefined): number | null | undefined {
 
 export class MangaDex {
   constructor(private env: Env, private deadline: number, private upstream: typeof fetch = fetch,
-              private context?: Pick<ExecutionContext, "waitUntil">) {}
+              private context?: Pick<ExecutionContext, "waitUntil">, private origin?: string) {}
   private async cacheKey(path: string): Promise<string> {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(path));
     return "md:v1:" + [...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, "0")).join("");
@@ -102,9 +103,14 @@ export class MangaDex {
   }
 
   async search(catalog: string, extras: ReadonlyMap<string, string>) {
-    const ranked = catalog === "top-rated";
+    const verified = verifiedShelf(catalog);
+    const rated = catalog === "top-rated";
+    const ranked = rated || verified !== undefined;
+    const limit = verified?.ids.size ?? (rated ? RATED_LIMIT : PAGE_SIZE);
     const offset = Number(extras.get("skip") ?? 0);
-    const params = new URLSearchParams({ limit: String(ranked ? RATED_LIMIT : PAGE_SIZE), offset: String(ranked ? 0 : offset) });
+    if (ranked && offset >= limit) return { metas: [] };
+    const params = new URLSearchParams({ limit: String(limit), offset: String(ranked ? 0 : offset) });
+    for (const uuid of verified?.ids.keys() ?? []) params.append("ids[]", uuid);
     params.append("contentRating[]", "safe"); params.append("contentRating[]", "suggestive");
     params.append("includes[]", "cover_art");
     if (catalog === "manhwa") params.append("originalLanguage[]", "ko");
@@ -113,32 +119,38 @@ export class MangaDex {
     const taxonomy = needsTags ? await this.get<Collection>("manga/tag", true) : null;
     if (needsTags) guard(Array.isArray(taxonomy?.data));
     applyFilters(params, extras, normalizedTags(taxonomy?.data));
-    params.set(ranked ? "order[rating]" : "order[latestUploadedChapter]", "desc");
+    params.set(verified ? "order[followedCount]" : rated ? "order[rating]" : "order[latestUploadedChapter]", "desc");
     params.set("order[createdAt]", "asc");
     if (ranked) {
-      if (offset >= RATED_LIMIT) return { metas: [] };
-      return { metas: (await this.rankedTitles(params)).slice(offset, offset + PAGE_SIZE) };
+      const page = (await this.rankedTitles(params, verified)).slice(offset, offset + PAGE_SIZE);
+      return { metas: verified ? await this.enrich(page) : page };
     }
     const data = await this.get<Collection>(`manga?${params}`, true);
     guard(Array.isArray(data?.data));
-    return { metas: await this.enrich(data.data.map(title)) };
+    return { metas: await this.enrich(data.data.map(item => title(item, this.origin))) };
   }
 
-  private async rankedTitles(params: URLSearchParams) {
+  private async rankedTitles(params: URLSearchParams, verified?: VerifiedShelf) {
     const path = `manga?${params}`;
     // Cache a single eligible ranked snapshot for all offsets of these filters.
-    const key = await this.cacheKey(`ranked:v1:${path}`);
+    const key = await this.cacheKey(`ranked:v2:${this.origin ?? ""}:${path}`);
     const saved = await this.readCache<CatalogTitle[]>(key);
     if (saved) return saved;
     const data = await this.get<Collection>(path, false);
     guard(Array.isArray(data?.data));
-    const candidates = [...new Map(data.data.map(raw => {
-      const item = title(raw);
-      return [item.id, item] as const;
+    const candidates = [...new Map(data.data.flatMap(raw => {
+      if (verified) {
+        const expected = typeof raw?.id === "string" ? verified.ids.get(raw.id.toLowerCase()) : undefined;
+        const links = raw.attributes?.links as Record<string, unknown> | undefined;
+        if (!expected || links?.mu !== expected) return [];
+      }
+      const item = title(raw, this.origin);
+      return [[item.id, verified ? { ...item, format: verified.format } : item] as const];
     })).values()];
-    const scores = await this.batchScores(candidates, this.deadline);
-    // MangaDex's rating order applies to the entire upstream query. Keep that order.
+    // The upstream order applies before slicing, and remains independent of the score badges.
+    const scores = verified ? null : await this.batchScores(candidates, this.deadline);
     const eligible = candidates.flatMap(item => {
+      if (!scores) return [item];
       const score = scores.get(item.id);
       return typeof score === "number" ? [{ ...item, communityScore: score }] : [];
     }).map((item, index) => ({ ...item, rank: index + 1 }));
@@ -148,12 +160,12 @@ export class MangaDex {
 
   async meta(id: string) {
     const data = await this.get<{ data: Entity }>(`manga/${id}?includes%5B%5D=cover_art`, true);
-    return data ? { meta: (await this.enrich([title(data.data)]))[0] } : null;
+    return data ? { meta: (await this.enrich([title(data.data, this.origin)]))[0] } : null;
   }
   async chapters(id: string) {
     const manga = await this.get<{ data: Entity }>(`manga/${id}?includes%5B%5D=cover_art`, true);
     if (!manga) return null;
-    const meta = title(manga.data);
+    const meta = title(manga.data, this.origin);
     const chapters: { id: string; title: string }[] = [];
     for (let offset = 0; offset < 10_000; offset += 100) {
       const data = await this.get<Collection>(`manga/${id}/feed?limit=100&offset=${offset}&order%5Bchapter%5D=asc`, true);

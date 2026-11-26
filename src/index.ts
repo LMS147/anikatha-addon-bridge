@@ -5,17 +5,24 @@ export { RateGate } from "./rate";
 export { PageStore } from "./pages";
 export { ReportQueue } from "./reports";
 import { image } from "./pages";
+import { cover } from "./covers";
 
 async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (request.method !== "GET") return json({ error: "GET only" }, 405);
   const u = new URL(request.url);
   const path = u.pathname;
   if (path === "/anikatha/manifest.json") return json(manifest, 200, true);
-  const md = new MangaDex(env, Date.now() + 17_000, fetch, ctx);
+  const md = new MangaDex(env, Date.now() + 17_000, fetch, ctx, u.origin);
   try {
     const catalog = path.match(/^\/anikatha\/catalog\/manga\/([a-z-]+)(?:\/([^/]+))?\.json$/);
     if (catalog && manifest.catalogs.some(entry => entry.id === catalog[1]))
-      return json(await md.search(catalog[1], parseExtras(catalog[2])), 200, catalog[1] !== "top-rated");
+      return json(await md.search(catalog[1], parseExtras(catalog[2])), 200, !manifest.catalogs.find(entry => entry.id === catalog[1])?.ranking);
+    const coverMatch = path.match(/^\/anikatha\/media\/cover\/([0-9a-f-]+)\/([^/]+)$/i);
+    if (coverMatch) {
+      const uuid = id(coverMatch[1], "");
+      if (!uuid) return json({ error: "Cover not found" }, 404);
+      return await cover(uuid, decodeURIComponent(coverMatch[2]));
+    }
     const imageMatch = path.match(/^\/anikatha\/media\/manga\/([0-9a-f-]+)\/(\d+)$/i);
     if (imageMatch) return await image(env, ctx, imageMatch[1].toLowerCase(), (u.searchParams.get("assignment") ?? "").toLowerCase(), imageMatch[2]);
     const match = path.match(/^\/anikatha\/(meta|chapters|pages)\/manga\/([^/]+)\.json$/);
@@ -39,9 +46,9 @@ export default {
     if (request.method !== "GET") return json({ error: "GET only" }, 405);
     const path = new URL(request.url).pathname;
     // Per-location HTTP caching supplements KV. Never cache at-home page URLs.
-    const topRated = /^\/anikatha\/catalog\/manga\/top-rated[./]/.test(path);
-    const eligible = path === "/anikatha/manifest.json" || (path.startsWith("/anikatha/catalog/") && !topRated)
-      || path.startsWith("/anikatha/meta/manga/") || path.startsWith("/anikatha/chapters/manga/");
+    const ranked = /^\/anikatha\/catalog\/manga\/(top-rated|popular-manga|popular-manhwa)[./]/.test(path);
+    const eligible = path === "/anikatha/manifest.json" || (path.startsWith("/anikatha/catalog/") && !ranked)
+      || path.startsWith("/anikatha/media/cover/") || path.startsWith("/anikatha/meta/manga/") || path.startsWith("/anikatha/chapters/manga/");
     const cache = eligible && typeof caches !== "undefined" ? (caches as unknown as { default: Cache }).default : undefined;
     if (cache) { try { const hit = await cache.match(request); if (hit) return hit; } catch { /* cache unavailable */ } }
     let timer: ReturnType<typeof setTimeout> | undefined;

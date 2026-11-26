@@ -46,13 +46,13 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     let r = await call("/anikatha/manifest.json");
     const manifest = await r.json();
     expect(manifest.types).toEqual(["manga"]); expect(manifest.anikathaProtocolVersion).toBe(1);
-    expect(manifest.catalogs.map((catalog: { id: string }) => catalog.id)).toEqual(["mangadex", "manhwa", "top-rated"]);
+    expect(manifest.catalogs.map((catalog: { id: string }) => catalog.id)).toEqual(["mangadex", "manhwa", "popular-manga", "popular-manhwa", "top-rated"]);
     r = await call("/anikatha/catalog/manga/mangadex/search=one%26two&skip=20.json");
     expect(r.status).toBe(200);
     const item = (await r.json()).metas[0];
     expect(item.id).toBe(`md:${manga}`);
     expect(item.communityScore).toBe(88);
-    expect(item.poster).toBe(`https://uploads.mangadex.org/covers/${manga}/example-cover.jpg.512.jpg`);
+    expect(item.poster).toBe(`https://bridge.example/anikatha/media/cover/${manga}/example-cover.jpg`);
     expect(new URL(catalogCalls()[0]).searchParams.get("includes[]")).toBe("cover_art");
     expect(new URL(catalogCalls()[0]).searchParams.get("title")).toBe("one&two");
     expect(new URL(catalogCalls()[0]).searchParams.get("offset")).toBe("20");
@@ -205,6 +205,53 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     expect(detail.status).toBe(200);
     expect((await detail.json()).chapters[0].id).toBe(`md:ch:${chapter}`);
     expect((await call("/anikatha/catalog/manga/top-rated.json")).status).toBe(503);
+  });
+
+  it("ranks only identified Manga and Manhwa without classifying by language", async () => {
+    const { verifiedShelf } = await import("../src/verified-formats");
+    const base = fixture("search").data[0];
+    for (const [catalog, format] of [["popular-manga", "Manga"], ["popular-manhwa", "Manhwa"]]) {
+      const verified = verifiedShelf(catalog)!;
+      const rows = [...verified.ids].map(([id, link]) =>
+        ({ ...base, id, attributes: { ...base.attributes, links: { mu: link } } }));
+      const unrelated = { ...base, attributes: { ...base.attributes, originalLanguage: "ko" } };
+      const changedLink = { ...rows[0], attributes: { ...rows[0].attributes, links: {} } };
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+        calls.push(url);
+        if (new URL(url).pathname === "/statistics/manga") return Response.json({ statistics: {} });
+        return Response.json({ data: [changedLink, unrelated, ...rows.slice(1)] });
+      }));
+      const response = await call(`/anikatha/catalog/manga/${catalog}.json`);
+      const first = (await response.json()).metas;
+      expect(first[0]).toMatchObject({ id: `md:${rows[1].id}`, format, rank: 1 });
+      expect(first.every((item: { format: string }) => item.format === format)).toBe(true);
+      expect(first.some((item: { id: string }) => item.id === `md:${rows[0].id}`)).toBe(false);
+      const before = catalogCalls().length;
+      const second = (await (await call(`/anikatha/catalog/manga/${catalog}/skip=20.json`)).json()).metas;
+      expect(second.map((item: { id: string }) => item.id)).toEqual(rows.slice(21).map(item => `md:${item.id}`));
+      expect(catalogCalls()).toHaveLength(before);
+      const params = new URL(catalogCalls().at(-1)!).searchParams;
+      expect(params.get("order[followedCount]")).toBe("desc");
+      expect(params.getAll("ids[]")).toEqual([...verified.ids.keys()]);
+      expect(params.has("originalLanguage[]")).toBe(false);
+    }
+    expect((await call("/anikatha/catalog/manga/popular-light-novels.json")).status).toBe(404);
+  });
+
+  it("serves a vetted cover on the bridge origin and rejects an upstream error page", async () => {
+    let mime = "image/jpeg";
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      return new Response(new Uint8Array([255, 216, 255, 217]), { headers: { "content-type": mime } });
+    }));
+    const path = `/anikatha/media/cover/${manga}/example-cover.jpg`;
+    const response = await call(path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(calls).toEqual([`https://uploads.mangadex.org/covers/${manga}/example-cover.jpg.512.jpg`]);
+    mime = "text/html";
+    expect((await call(path)).status).toBe(502);
+    expect((await call(`/anikatha/media/cover/${manga}/%2Fother.jpg`)).status).toBe(404);
   });
 
   it("returns 404 for unknown units and unconfigured anime; rejects writes", async () => {

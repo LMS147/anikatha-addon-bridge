@@ -6,6 +6,10 @@ import { RateGate } from "../src/rate";
 const manga = "11111111-1111-4111-8111-111111111111";
 const chapter = "22222222-2222-4222-8222-222222222222";
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
+const uuid = (index: number) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+const tag = (index: number, name: string, group: string) => ({
+  id: uuid(index), type: "tag", attributes: { name: { en: name }, group }
+});
 const store = new Map<string, string>();
 const assignments = new Map<string, string>();
 const env = {
@@ -19,6 +23,7 @@ const env = {
 const context = { waitUntil: (_p: Promise<unknown>) => {} } as ExecutionContext;
 const call = (path: string, method = "GET") => worker.fetch(new Request("https://bridge.example" + path, { method }), env, context);
 let calls: string[];
+const catalogCalls = () => calls.filter(url => new URL(url).pathname === "/manga");
 
 beforeEach(() => {
   store.clear(); assignments.clear(); calls = [];
@@ -26,6 +31,7 @@ beforeEach(() => {
     calls.push(url);
     const u = new URL(url);
     let name = "";
+    if (u.pathname === "/statistics/manga") return Response.json({ statistics: { [manga]: { rating: { average: 9.1, bayesian: 8.83 } } } });
     if (u.pathname === "/manga") name = "search";
     else if (u.pathname === `/manga/${manga}`) name = "manga";
     else if (u.pathname === `/manga/${manga}/feed`) name = "feed";
@@ -40,21 +46,25 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     let r = await call("/anikatha/manifest.json");
     const manifest = await r.json();
     expect(manifest.types).toEqual(["manga"]); expect(manifest.anikathaProtocolVersion).toBe(1);
-    expect(manifest.catalogs.map((catalog: { id: string }) => catalog.id)).toEqual(["mangadex", "manhwa"]);
+    expect(manifest.catalogs.map((catalog: { id: string }) => catalog.id)).toEqual(["mangadex", "manhwa", "top-rated"]);
     r = await call("/anikatha/catalog/manga/mangadex/search=one%26two&skip=20.json");
     expect(r.status).toBe(200);
     const item = (await r.json()).metas[0];
     expect(item.id).toBe(`md:${manga}`);
+    expect(item.communityScore).toBe(88);
     expect(item.poster).toBe(`https://uploads.mangadex.org/covers/${manga}/example-cover.jpg.512.jpg`);
-    expect(new URL(calls[0]).searchParams.get("includes[]")).toBe("cover_art");
-    expect(new URL(calls[0]).searchParams.get("title")).toBe("one&two");
-    expect(new URL(calls[0]).searchParams.get("offset")).toBe("20");
+    expect(new URL(catalogCalls()[0]).searchParams.get("includes[]")).toBe("cover_art");
+    expect(new URL(catalogCalls()[0]).searchParams.get("title")).toBe("one&two");
+    expect(new URL(catalogCalls()[0]).searchParams.get("offset")).toBe("20");
     const meta = (await (await call(`/anikatha/meta/manga/md%3A${manga}.json`)).json()).meta;
     expect(meta.id).toBe(`md:${manga}`);
     expect(meta.poster).toBe(item.poster);
+    expect(meta.communityScore).toBe(item.communityScore);
     const details = await (await call(`/anikatha/chapters/manga/md%3A${manga}.json`)).json();
     expect(details.chapters[0].id).toBe(`md:ch:${chapter}`);
     expect(details.meta.poster).toBe(item.poster);
+    expect(details.meta.communityScore).toBe(item.communityScore);
+    expect(calls.filter(url => url.includes("/statistics/manga"))).toHaveLength(1);
     r = await call(`/anikatha/pages/manga/md%3Ach%3A${chapter}.json`);
     expect(r.status).toBe(200); expect(r.headers.get("cache-control")).toBe("no-store");
     const data = await r.json();
@@ -69,17 +79,17 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     const browse = await call("/anikatha/catalog/manga/manhwa.json");
     expect(browse.status).toBe(200);
     expect((await browse.json()).metas[0].type).toBe("manga");
-    expect(new URL(calls[0]).searchParams.getAll("originalLanguage[]")).toEqual(["ko"]);
+    expect(new URL(catalogCalls()[0]).searchParams.getAll("originalLanguage[]")).toEqual(["ko"]);
     const search = await call("/anikatha/catalog/manga/manhwa/search=love%20%26%20war&skip=40.json");
     expect(search.status).toBe(200);
-    const query = new URL(calls[1]).searchParams;
+    const query = new URL(catalogCalls()[1]).searchParams;
     expect(query.get("title")).toBe("love & war");
     expect(query.get("offset")).toBe("40");
     expect(query.getAll("originalLanguage[]")).toEqual(["ko"]);
     expect((await call("/anikatha/catalog/manga/manhwa/skip=20.json")).status).toBe(200);
-    expect(new URL(calls[2]).searchParams.get("offset")).toBe("20");
+    expect(new URL(catalogCalls()[2]).searchParams.get("offset")).toBe("20");
     expect((await call("/anikatha/catalog/manga/mangadex.json")).status).toBe(200);
-    expect(new URL(calls[3]).searchParams.has("originalLanguage[]")).toBe(false);
+    expect(new URL(catalogCalls()[3]).searchParams.has("originalLanguage[]")).toBe(false);
     expect((await call("/anikatha/catalog/manga/not-a-catalog.json")).status).toBe(404);
     expect((await call("/anikatha/catalog/manga/manhwa/skip=99999.json")).status).toBe(400);
   });
@@ -92,6 +102,111 @@ describe("AniKatha Worker contract (mocked upstream)", () => {
     delete source.data[0].relationships;
     expect((await (await call("/anikatha/catalog/manga/mangadex.json")).json()).metas[0].poster).toBeUndefined();
   });
+  it("normalizes facts and separates genre, theme, and format tags", async () => {
+    const { title } = await import("../src/catalog");
+    const { data: [item] } = fixture("search");
+    item.attributes = { ...item.attributes, year: 2007, status: "ongoing", originalLanguage: "ko",
+      tags: [tag(1, " Romance ", "genre"), tag(2, "ROMANCE", "genre"), tag(3, " School Life ", "theme"),
+        tag(4, "Oneshot", "format"), tag(5, "Web Comic", "format")] };
+    const card = title(item);
+    expect(card).toMatchObject({ genres: [expect.stringMatching(/^romance$/i)],
+      tags: ["School Life", "Oneshot", "Web Comic"], tagIds: [uuid(3), uuid(4), uuid(5)],
+      year: 2007, status: "Publishing", format: "One-shot" });
+    item.attributes.tags = [];
+    item.attributes.year = null;
+    item.attributes.status = "unsupported";
+    expect(title(item)).toEqual({ id: card.id, name: card.name, type: "manga", poster: card.poster });
+  });
+
+  it("forwards every advertised filter and retains the same order and filters on page two", async () => {
+    const taxonomy = [tag(1, "Action", "genre"), tag(2, "Magic", "theme"), tag(3, "Oneshot", "format"), tag(4, "Web Comic", "format")];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      const path = new URL(url).pathname;
+      if (path === "/manga/tag") return Response.json({ data: taxonomy });
+      if (path === "/statistics/manga") return Response.json({ statistics: { [manga]: { rating: { average: null } } } });
+      const payload = fixture("search");
+      if (new URL(url).searchParams.get("offset") === "20") payload.data[0].id = uuid(20);
+      return Response.json(payload);
+    }));
+    const cases = [
+      ["genre=Action", "includedTags[]", uuid(1)], [`tag=${uuid(2)}`, "includedTags[]", uuid(2)],
+      ["year=2020", "year", "2020"], ["format=Web%20Comic", "includedTags[]", uuid(4)],
+      ["status=Publishing", "status[]", "ongoing"]
+    ];
+    for (const [filter, parameter, expected] of cases) {
+      const response = await call(`/anikatha/catalog/manga/manhwa/${filter}.json`);
+      expect(response.status).toBe(200);
+      expect(new URL(catalogCalls().at(-1)!).searchParams.get(parameter)).toBe(expected);
+    }
+    const combined = cases.map(criteria => criteria[0]).join("&");
+    const first = await call(`/anikatha/catalog/manga/manhwa/${combined}&search=hello.json`);
+    const second = await call(`/anikatha/catalog/manga/manhwa/${combined}&search=hello&skip=20.json`);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect((await second.json()).metas[0].id).not.toBe((await first.json()).metas[0].id);
+    const params = catalogCalls().slice(-2).map(url => new URL(url).searchParams);
+    expect(params[1].get("offset")).toBe("20");
+    params[0].delete("offset"); params[1].delete("offset");
+    expect(params[1].toString()).toBe(params[0].toString());
+    expect(params[0].getAll("includedTags[]")).toEqual([uuid(1), uuid(2), uuid(4)]);
+    expect(params[0].get("includedTagsMode")).toBe("AND");
+    expect(params[0].get("excludedTags[]")).toBe(uuid(3));
+    expect(params[0].get("order[createdAt]")).toBe("asc");
+    expect(calls.filter(url => new URL(url).pathname === "/manga/tag")).toHaveLength(1);
+    expect((await call("/anikatha/catalog/manga/manhwa/genre=Magic.json")).status).toBe(400);
+    expect((await call("/anikatha/catalog/manga/manhwa/year=abcdef.json")).status).toBe(400);
+  });
+
+  it("ranks eligible rated titles before pagination and reuses the same upstream snapshot", async () => {
+    const base = fixture("search").data[0];
+    const data = Array.from({ length: 45 }, (_, index) => ({ ...base, id: uuid(index + 1) }));
+    const statistics = Object.fromEntries(data.map((item, index) => [item.id, { rating: {
+      average: index === 1 ? null : 9, bayesian: 9 - index / 10
+    } }]));
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(url);
+      return Response.json(new URL(url).pathname === "/statistics/manga" ? { statistics } : { data });
+    }));
+    const start = await call("/anikatha/catalog/manga/top-rated.json");
+    expect(start.headers.get("cache-control")).toBe("no-store");
+    const first = (await start.json()).metas;
+    const second = (await (await call("/anikatha/catalog/manga/top-rated/skip=20.json")).json()).metas;
+    expect(first).toHaveLength(20); expect(second).toHaveLength(20);
+    expect(first[0]).toMatchObject({ id: `md:${uuid(1)}`, communityScore: 90, rank: 1 });
+    expect(first[1]).toMatchObject({ id: `md:${uuid(3)}`, rank: 2 });
+    expect(second[0]).toMatchObject({ id: `md:${uuid(22)}`, rank: 21 });
+    expect(new Set([...first, ...second].map(item => item.id)).size).toBe(40);
+    expect(new URL(catalogCalls()[0]).searchParams.get("order[rating]")).toBe("desc");
+    expect(new URL(catalogCalls()[0]).searchParams.get("offset")).toBe("0");
+    expect(catalogCalls()).toHaveLength(1);
+    expect(calls.filter(url => url.includes("/statistics/manga"))).toHaveLength(1);
+    expect((await (await call("/anikatha/catalog/manga/top-rated/skip=60.json")).json()).metas).toEqual([]);
+  });
+
+  it("keeps readable titles when optional statistics and artwork are unavailable", async () => {
+    const source = fixture("manga");
+    source.data.attributes.year = null;
+    delete source.data.attributes.tags;
+    delete source.data.relationships;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === "/statistics/manga") return new Response(null, { status: 503 });
+      if (path === `/manga/${manga}/feed`) return Response.json(fixture("feed"));
+      return Response.json(path === "/manga" ? { data: [source.data] } : source);
+    }));
+    const listing = await call("/anikatha/catalog/manga/mangadex.json");
+    expect(listing.status).toBe(200);
+    const [card] = (await listing.json()).metas;
+    expect(card.id).toBe(`md:${manga}`);
+    for (const field of ["tags", "year", "communityScore", "rank", "poster"])
+      expect(card).not.toHaveProperty(field);
+    const detail = await call(`/anikatha/chapters/manga/md%3A${manga}.json`);
+    expect(detail.status).toBe(200);
+    expect((await detail.json()).chapters[0].id).toBe(`md:ch:${chapter}`);
+    expect((await call("/anikatha/catalog/manga/top-rated.json")).status).toBe(503);
+  });
+
   it("returns 404 for unknown units and unconfigured anime; rejects writes", async () => {
     expect((await call("/anikatha/stream/anime/ep%3Anone.json")).status).toBe(404);
     expect((await call("/anikatha/meta/anime/anilist%3A1.json")).status).toBe(404);

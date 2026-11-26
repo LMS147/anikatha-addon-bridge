@@ -25,7 +25,7 @@ export const catalogExtras = [
 ];
 
 export const manifest = {
-  id: "org.anikatha.addon-bridge.mangadex", version: "3.3.0", anikathaProtocolVersion: 1,
+  id: "org.anikatha.addon-bridge.mangadex", version: "3.4.0", anikathaProtocolVersion: 1,
   name: "AniKatha MangaDex Bridge", description: "MangaDex manga and manhwa discovery and reading.",
   types: ["manga"],
   resources: [
@@ -37,6 +37,8 @@ export const manifest = {
   catalogs: [
     { type: "manga", id: "mangadex", name: "MangaDex", extra: catalogExtras },
     { type: "manga", id: "manhwa", name: "Manhwa (Korean originals)", extra: catalogExtras },
+    { type: "manga", id: "popular-manga", name: "Verified Manga · MangaUpdates formats", format: "Manga", ranking: "popularity", extra: catalogExtras },
+    { type: "manga", id: "popular-manhwa", name: "Verified Manhwa · MangaUpdates formats", format: "Manhwa", ranking: "popularity", extra: catalogExtras },
     { type: "manga", id: "top-rated", name: "MangaDex Top Rated", ranking: "score", extra: catalogExtras }
   ]
 };
@@ -69,7 +71,7 @@ function uniqueNames(tags: { name: string }[]) {
   return [...new Map(tags.map(tag => [key(tag.name), tag.name])).values()];
 }
 
-export function title(item: Entity) {
+export function title(item: Entity, origin?: string) {
   const uuid = typeof item?.id === "string" ? id(item.id, "") : null;
   const name = nameOf(item?.attributes?.title);
   if (!uuid || !name) throw new Failure(502, "Invalid MangaDex title");
@@ -77,7 +79,11 @@ export function title(item: Entity) {
   const file = Array.isArray(item.relationships)
     ? item.relationships.find(relation => relation?.type === "cover_art")?.attributes?.fileName
     : undefined;
-  const poster = segment(file) ? `https://uploads.mangadex.org/covers/${uuid}/${file}.512.jpg` : undefined;
+  const poster = segment(file)
+    ? origin?.startsWith("https://")
+      ? `${origin}/anikatha/media/cover/${uuid}/${file}`
+      : `https://uploads.mangadex.org/covers/${uuid}/${file}.512.jpg`
+    : undefined;
   const tags = normalizedTags(item.attributes.tags);
   const genreTags = tags.filter(tag => tag.group === "genre");
   const otherTags = tags.filter(tag => tag.group !== "genre");
@@ -97,7 +103,11 @@ export function title(item: Entity) {
   };
 }
 
-export type CatalogTitle = ReturnType<typeof title> & { communityScore?: number; rank?: number };
+export type CatalogTitle = Omit<ReturnType<typeof title>, "format"> & {
+  format?: NonNullable<ReturnType<typeof title>["format"]> | "Manga" | "Manhwa";
+  communityScore?: number;
+  rank?: number;
+};
 
 export function parseExtras(segment: string | undefined) {
   const extras = new Map<string, string>();

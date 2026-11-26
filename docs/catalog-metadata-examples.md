@@ -1,6 +1,6 @@
 # Catalog metadata examples
 
-These two entries are an excerpt of `GET /anikatha/catalog/manga/top-rated.json` from the local Worker. The Worker replay used the public MangaDex catalog and statistics captured on 26 November 2026. The examples show observed values for **One Piece** and **The Greatest Estate Developer**. Their scores, ranks, statuses, and covers can change upstream.
+These two historical entries predate the bridge-origin cover route. They are an excerpt of `GET /anikatha/catalog/manga/top-rated.json` from the local Worker. The Worker replay used the public MangaDex catalog and statistics captured on 26 November 2026. The examples show observed values for **One Piece** and **The Greatest Estate Developer**. Their scores, ranks, statuses, and covers can change upstream.
 
 The MangaDex record for One Piece does not expose a supported format tag, so the Worker omits `format`. The Greatest Estate Developer has an explicit Web Comic format tag. Both records keep the broad HTTP media type `manga`. The generic catalog and title detail responses omit `rank` because those responses do not represent this ranked snapshot.
 
